@@ -1,0 +1,10 @@
+{
+  "name": "lampa-online-starter",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lampa Online starter: API + Android TV plugin",
+  "type": "commonjs",
+  "scripts": {"start": "node server.js", "check": "node --check server.js && node --check plugin.js"},
+  "engines": {"node": ">=18"},
+  "dependencies": {"express": "^4.21.2", "cors": "^2.8.5"}
+}
