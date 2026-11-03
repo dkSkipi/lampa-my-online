@@ -1,0 +1,58 @@
+'use strict';
+const {test} = require('node:test');
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const fs = require('node:fs');
+const {createServer} = require('./server');
+test('HTTP contract, CORS, validation and safe origin injection',async () => {
+  const server = createServer({base:'https://example.org'});
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));
+  const base = 'http://127.0.0.1:'+server.address().port;
+  try {
+    const health = await fetch(base+'/health');
+    assert.equal(health.headers.get('access-control-allow-origin'),'*');
+    assert.equal((await health.json()).version,'0.2.0');
+    assert.equal((await fetch(base+'/api/search')).status,400);
+    const search = await (await fetch(base+'/api/search?q='+encodeURIComponent('Апокалипсис'))).json();
+    assert.deepEqual(search.items,[]);
+    const demo = await (await fetch(base+'/api/demo')).json();
+    assert.match(demo.items[0].versions[0].url,/^https:/);
+    const js = await (await fetch(base+'/plugin.js',{headers:{host:'evil.invalid'}})).text();
+    assert.ok(js.includes('var API = "https://example.org"'));
+    new vm.Script(js);
+    assert.equal((await fetch(base+'/health',{method:'OPTIONS'})).status,204);
+    assert.equal((await fetch(base+'/no-such-route')).status,404);
+    assert.equal((await fetch(base+'/health',{method:'POST'})).status,405);
+    assert.equal(await (await fetch(base+'/health',{method:'HEAD'})).text(),'');
+  } finally { await new Promise(r=>server.close(r)); }
+});
+test('plugin menu, playback, timeout, malformed API, duplicate load',()=>{
+  let listener, menu, enter, ajax, played, playlist, notices=[];
+  const button = {on:(event,fn)=>{enter=fn;return button;}};
+  const box = {length:1,eq(){return this;},append(){}};
+  const root = {find:s=>s==='.view--my-online-v02'?{length:0}:box};
+  const $ = ()=>button;
+  $.ajax = options=>{ajax=options;};
+  const L = {Listener:{follow:(event,fn)=>{listener=fn;}},Noty:{show:t=>notices.push(t)},Select:{show:m=>{menu=m;},hide(){}},Controller:{toggle(){}},Player:{play:p=>{played=p;},playlist:p=>{playlist=p;}}};
+  const context = vm.createContext({window:{Lampa:L,jQuery:$},document:{currentScript:{src:'https://example.org/plugin.js'},createElement:()=>({set href(s){const u=new URL(s);this.protocol=u.protocol;this.host=u.host;}})}});
+  const source = fs.readFileSync(require('node:path').join(__dirname,'plugin.js'),'utf8');
+  vm.runInContext(source,context);
+  const originalListener=listener;
+  vm.runInContext(source,context);
+  assert.equal(listener,originalListener);
+  listener({type:'complite',object:{activity:{render:()=>root}},data:{movie:{title:'Фильм'}}});
+  enter();
+  menu.onSelect(menu.items[1]);
+  assert.equal(ajax.url,'https://example.org/api/demo');
+  assert.equal(ajax.timeout,90000);
+  ajax.success({ok:true,version:'0.2.0',items:[{title:'Demo',versions:[{name:'MP4',url:'https://example.org/video.mp4'}]}]});
+  menu.onSelect(menu.items[0]);
+  assert.equal(played.url,'https://example.org/video.mp4');
+  assert.equal(playlist.length,1);
+  enter();menu.onSelect(menu.items[2]);ajax.error({status:0},'timeout');
+  assert.match(notices.at(-1),/TIMEOUT/);
+  enter();menu.onSelect(menu.items[2]);ajax.success({ok:true,version:'0.1.0'});
+  assert.match(notices.at(-1),/API_MISMATCH/);
+  enter();menu.onSelect(menu.items[2]);ajax.error({status:200},'parsererror');
+  assert.match(notices.at(-1),/INVALID_JSON/);
+});
