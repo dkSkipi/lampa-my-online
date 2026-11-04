@@ -2,6 +2,7 @@
 // Confirmed against rezka.si login page, 2026-11-03. No stream API assumed.
 const BASE = 'https://rezka.si';
 const FILM = '/films/action/93568-gladiator-1986.html';
+const {parsePage,parseStreams}=require('./player-data');
 const MESSAGES = {
   CHECKING:'Проверяется вход на Rezka…',
   NOT_CONFIGURED:'Добавьте REZKA_LOGIN и REZKA_PASSWORD в Environment сервиса Render.',
@@ -28,6 +29,14 @@ function createProbe({login, password, fetchImpl=fetch} = {}) {
   let started = false;
   // In-memory, same-origin session. Never returned to callers or written to logs.
   const jar = new Map();
+  let movieData=null;
+  let busy=false,lastRequest=0;
+  const streamCache=new Map();
+  function pageAvailable(html) {
+    if(!isFilm(html)) return update('PAGE_UNRECOGNIZED');
+    try { movieData=parsePage(html); } catch (_) { movieData=null; }
+    return update('PAGE_AVAILABLE');
+  }
   function update(code) { state={code,message:MESSAGES[code],checkedAt:new Date().toISOString(),streamReady:false}; return {...state}; }
   function remember(headers, pathname) {
     for (const line of headers.getSetCookie()) {
@@ -77,17 +86,41 @@ function createProbe({login, password, fetchImpl=fetch} = {}) {
     try {
       if(Boolean(login)!==Boolean(password)) return update('CONFIG_INCOMPLETE');
       const html=await request(FILM);
-      if(!isLogin(html)) return update(isFilm(html)?'PAGE_AVAILABLE':'PAGE_UNRECOGNIZED');
+      if(!isLogin(html)) return pageAvailable(html);
       if(!login || !password) return update('AUTH_REQUIRED');
       const reply=await request('/ajax/login/',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8','X-Requested-With':'XMLHttpRequest','Origin':BASE},body:new URLSearchParams({login_name:login,login_password:password,login_not_save:'0'}).toString()});
       let data; try { data=JSON.parse(reply); } catch (_) { return update('INVALID_RESPONSE'); }
       if(!data || (data.success!==true && data.success!==1)) return update('LOGIN_REJECTED');
       const page=await request(FILM);
-      return update(isLogin(page)?'LOGIN_REQUIRED_AFTER_SUCCESS':isFilm(page)?'PAGE_AVAILABLE':'PAGE_UNRECOGNIZED');
+      return isLogin(page)?update('LOGIN_REQUIRED_AFTER_SUCCESS'):pageAvailable(page);
     } catch (error) { return update(error instanceof UpstreamError ? error.code : 'NETWORK'); }
-    finally { jar.clear(); }
+    finally { if(state.code!=='PAGE_AVAILABLE') jar.clear(); }
   }
-  return {run,status:()=>({...state})};
+  function movie() {
+    if(state.code!=='PAGE_AVAILABLE') throw new Error(state.code);
+    if(!movieData) throw new Error('PLAYER_NOT_RECOGNIZED');
+    return {id:movieData.id,title:movieData.title,translations:movieData.translations.map(t=>({id:t.id,name:t.name}))};
+  }
+  async function stream(id) {
+    movie();
+    const t=movieData.translations.find(t=>t.id===id);
+    if(!t) throw new Error('INVALID_TRANSLATOR');
+    const cached=streamCache.get(id);
+    if(cached && cached.until>Date.now()) return cached.items;
+    if(busy || Date.now()-lastRequest<2000) throw new Error('WAIT_AND_RETRY');
+    busy=true;lastRequest=Date.now();
+    try {
+      const raw=await request('/ajax/get_cdn_series/',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8','X-Requested-With':'XMLHttpRequest','Origin':BASE,'Referer':BASE+FILM},body:new URLSearchParams({id:movieData.id,translator_id:id,is_ads:t.ads,is_camrip:t.camrip,is_director:t.director,action:'get_movie'}).toString()});
+      if(isLogin(raw)) throw new Error('SESSION_EXPIRED');
+      let data;try { data=JSON.parse(raw); } catch(_) { throw new Error('STREAM_INVALID_JSON'); }
+      if(data.success===false) throw new Error('STREAM_REJECTED');
+      const items=parseStreams(data.url);
+      state.streamReady=true;
+      streamCache.set(id,{until:Date.now()+60000,items});
+      return items;
+    } finally { busy=false; }
+  }
+  return {run,status:()=>({...state,playerRecognized:!!movieData}),movie,stream};
 }
 module.exports={createProbe};
 if(require.main===module) {
