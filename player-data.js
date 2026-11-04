@@ -2,19 +2,19 @@
 // Independent, fail-closed parser. Never executes JavaScript from a page.
 function plain(s) { return s.replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&nbsp;/g,' ').trim(); }
 function attrs(tag) { const out={}; for(const m of tag.matchAll(/([\w-]+)\s*=\s*(["'])(.*?)\2/gs)) out[m[1]]=m[3]; return out; }
-function parsePage(html) {
+function parsePage(html,expectedId='93568') {
   if(/<input\b[^>]*type=["']password["']/i.test(html)) throw new Error('SESSION_EXPIRED');
-  const init=html.match(/initCDNMoviesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,/);
-  if(!init || init[1]!=='93568') throw new Error('PLAYER_NOT_RECOGNIZED');
+  const init=html.match(/initCDN(Movies|Series)Events\(\s*(\d+)\s*,\s*(\d+)\s*,/);
+  if(!init || init[2]!==expectedId) throw new Error('PLAYER_NOT_RECOGNIZED');
   const translations=[];
   for(const m of html.matchAll(/<(li|div|a|span)\b([^>]*\bclass=["'][^"']*\bb-translator__item\b[^"']*["'][^>]*)>([\s\S]*?)<\/\1>/g)) {
     const a=attrs(m[2]),id=a['data-translator_id'];
     if(!/^\d+$/.test(id || '') || translations.some(t=>t.id===id)) continue;
     translations.push({id,name:plain(m[3]).slice(0,150)||('Озвучка '+id),ads:a['data-ads']==='1'?'1':'0',camrip:a['data-camrip']==='1'?'1':'0',director:a['data-director']==='1'?'1':'0'});
   }
-  if(!translations.some(t=>t.id===init[2])) translations.unshift({id:init[2],name:'Основная озвучка',ads:'0',camrip:'0',director:'0'});
+  if(!translations.some(t=>t.id===init[3])) translations.unshift({id:init[3],name:'Основная озвучка',ads:'0',camrip:'0',director:'0'});
   const name=html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i);
-  return {id:init[1],title:name?plain(name[1]).slice(0,200):'Гладиатор (1986)',translations};
+  return {id:init[2],type:init[1]==='Series'?'series':'movie',title:name?plain(name[1]).slice(0,200):'Проверочное видео Rezka',translations};
 }
 function decode(value) {
   if(typeof value!=='string' || value.length>1000000) throw new Error('STREAM_FORMAT_UNKNOWN');
@@ -50,4 +50,16 @@ function parseStreams(raw) {
   if(!items.length) throw new Error('NO_PLAYABLE_STREAMS');
   return items;
 }
-module.exports={parsePage,parseStreams};
+function parseEpisodes(html) {
+  if(typeof html!=='string') throw new Error('EPISODES_NOT_RECOGNIZED');
+  const items=[];
+  for(const m of html.matchAll(/<(li|div|a|span)\b([^>]*\bclass=["'][^"']*\bb-simple_episode__item\b[^"']*["'][^>]*)>([\s\S]*?)<\/\1>/g)) {
+    const a=attrs(m[2]),season=Number(a['data-season_id']),episode=Number(a['data-episode_id']);
+    if(!Number.isInteger(season) || !Number.isInteger(episode) || season<1 || episode<1 || season>1000 || episode>10000) continue;
+    if(!items.some(i=>i.season===season && i.episode===episode)) items.push({season,episode,title:plain(m[3]).slice(0,150)||('Серия '+episode)});
+    if(items.length>10000) throw new Error('EPISODES_NOT_RECOGNIZED');
+  }
+  if(!items.length) throw new Error('EPISODES_NOT_RECOGNIZED');
+  return items.sort((a,b)=>a.season-b.season || a.episode-b.episode);
+}
+module.exports={parsePage,parseStreams,parseEpisodes};

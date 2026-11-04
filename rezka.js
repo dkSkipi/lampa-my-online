@@ -2,7 +2,7 @@
 // Confirmed against rezka.si login page, 2026-11-03. No stream API assumed.
 const BASE = 'https://rezka.si';
 const FILM = '/films/action/93568-gladiator-1986.html';
-const {parsePage,parseStreams}=require('./player-data');
+const {parsePage,parseStreams,parseEpisodes}=require('./player-data');
 const MESSAGES = {
   CHECKING:'Проверяется вход на Rezka…',
   NOT_CONFIGURED:'Добавьте REZKA_LOGIN и REZKA_PASSWORD в Environment сервиса Render.',
@@ -23,8 +23,12 @@ const MESSAGES = {
 };
 class UpstreamError extends Error { constructor(code) { super(code); this.code=code; } }
 function isLogin(html) { return /<form\b[^>]*\bid=["']loginForm["']/i.test(html) || /<input\b[^>]*\btype=["']password["']/i.test(html); }
-function isFilm(html) { return /b-content__main/.test(html) && /93568/.test(html) && !isLogin(html); }
-function createProbe({login, password, fetchImpl=fetch} = {}) {
+function isFilm(html,id) { return /b-content__main/.test(html) && html.includes(id) && !isLogin(html); }
+function createProbe({login, password, filmUrl=BASE+FILM, fetchImpl=fetch} = {}) {
+  const target=new URL(filmUrl);
+  const idMatch=target.pathname.match(/^\/(?:films|series)\/[a-z0-9-]+\/(\d+)-[a-z0-9-]+\.html$/i);
+  if(target.origin!==BASE || target.username || target.password || target.search || target.hash || !idMatch) throw new Error('REZKA_FILM_URL: required https://rezka.si/films/category/ID-title.html');
+  const filmPath=target.pathname,filmId=idMatch[1];
   let state = {code:'NOT_CONFIGURED',message:MESSAGES.NOT_CONFIGURED,checkedAt:null,streamReady:false};
   let started = false;
   // In-memory, same-origin session. Never returned to callers or written to logs.
@@ -32,9 +36,10 @@ function createProbe({login, password, fetchImpl=fetch} = {}) {
   let movieData=null;
   let busy=false,lastRequest=0;
   const streamCache=new Map();
+  const episodeCache=new Map();
   function pageAvailable(html) {
-    if(!isFilm(html)) return update('PAGE_UNRECOGNIZED');
-    try { movieData=parsePage(html); } catch (_) { movieData=null; }
+    if(!isFilm(html,filmId)) return update('PAGE_UNRECOGNIZED');
+    try { movieData=parsePage(html,filmId); } catch (_) { movieData=null; }
     return update('PAGE_AVAILABLE');
   }
   function update(code) { state={code,message:MESSAGES[code],checkedAt:new Date().toISOString(),streamReady:false}; return {...state}; }
@@ -85,13 +90,13 @@ function createProbe({login, password, fetchImpl=fetch} = {}) {
     started=true; update('CHECKING');
     try {
       if(Boolean(login)!==Boolean(password)) return update('CONFIG_INCOMPLETE');
-      const html=await request(FILM);
+      const html=await request(filmPath);
       if(!isLogin(html)) return pageAvailable(html);
       if(!login || !password) return update('AUTH_REQUIRED');
       const reply=await request('/ajax/login/',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8','X-Requested-With':'XMLHttpRequest','Origin':BASE},body:new URLSearchParams({login_name:login,login_password:password,login_not_save:'0'}).toString()});
       let data; try { data=JSON.parse(reply); } catch (_) { return update('INVALID_RESPONSE'); }
       if(!data || (data.success!==true && data.success!==1)) return update('LOGIN_REJECTED');
-      const page=await request(FILM);
+      const page=await request(filmPath);
       return isLogin(page)?update('LOGIN_REQUIRED_AFTER_SUCCESS'):pageAvailable(page);
     } catch (error) { return update(error instanceof UpstreamError ? error.code : 'NETWORK'); }
     finally { if(state.code!=='PAGE_AVAILABLE') jar.clear(); }
@@ -99,31 +104,55 @@ function createProbe({login, password, fetchImpl=fetch} = {}) {
   function movie() {
     if(state.code!=='PAGE_AVAILABLE') throw new Error(state.code);
     if(!movieData) throw new Error('PLAYER_NOT_RECOGNIZED');
-    return {id:movieData.id,title:movieData.title,translations:movieData.translations.map(t=>({id:t.id,name:t.name}))};
+    return {id:movieData.id,type:movieData.type,title:movieData.title,translations:movieData.translations.map(t=>({id:t.id,name:t.name}))};
   }
-  async function stream(id) {
+  async function episodes(id) {
+    movie();
+    if(movieData.type!=='series' || !movieData.translations.some(t=>t.id===id)) throw new Error('INVALID_TRANSLATOR');
+    const cached=episodeCache.get(id);
+    if(cached && cached.until>Date.now()) return cached.items;
+    if(busy) throw new Error('WAIT_AND_RETRY');
+    busy=true;
+    try {
+      const raw=await request('/ajax/get_cdn_series/',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8','X-Requested-With':'XMLHttpRequest','Origin':BASE,'Referer':BASE+filmPath},body:new URLSearchParams({id:movieData.id,translator_id:id,action:'get_episodes'}).toString()});
+      if(isLogin(raw)) throw new Error('SESSION_EXPIRED');
+      let data;try {data=JSON.parse(raw);}catch(_){throw new Error('STREAM_INVALID_JSON');}
+      if(data.success===false) throw new Error('STREAM_REJECTED');
+      const items=parseEpisodes(data.episodes);
+      episodeCache.set(id,{until:Date.now()+300000,items});
+      return items;
+    } finally {busy=false;}
+  }
+  async function stream(id,selection={}) {
     movie();
     const t=movieData.translations.find(t=>t.id===id);
     if(!t) throw new Error('INVALID_TRANSLATOR');
-    const cached=streamCache.get(id);
+    const fields={id:movieData.id,translator_id:id,is_ads:t.ads,is_camrip:t.camrip,is_director:t.director,action:'get_movie'};
+    if(movieData.type==='series') {
+      const available=await episodes(id);
+      if(!available.some(e=>e.season===selection.season && e.episode===selection.episode)) throw new Error('EPISODE_NOT_AVAILABLE');
+      fields.action='get_stream';fields.season=String(selection.season);fields.episode=String(selection.episode);
+    }
+    const cacheKey=id+':'+(fields.season || '')+':'+(fields.episode || '');
+    const cached=streamCache.get(cacheKey);
     if(cached && cached.until>Date.now()) return cached.items;
     if(busy || Date.now()-lastRequest<2000) throw new Error('WAIT_AND_RETRY');
     busy=true;lastRequest=Date.now();
     try {
-      const raw=await request('/ajax/get_cdn_series/',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8','X-Requested-With':'XMLHttpRequest','Origin':BASE,'Referer':BASE+FILM},body:new URLSearchParams({id:movieData.id,translator_id:id,is_ads:t.ads,is_camrip:t.camrip,is_director:t.director,action:'get_movie'}).toString()});
+      const raw=await request('/ajax/get_cdn_series/',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8','X-Requested-With':'XMLHttpRequest','Origin':BASE,'Referer':BASE+filmPath},body:new URLSearchParams(fields).toString()});
       if(isLogin(raw)) throw new Error('SESSION_EXPIRED');
       let data;try { data=JSON.parse(raw); } catch(_) { throw new Error('STREAM_INVALID_JSON'); }
       if(data.success===false) throw new Error('STREAM_REJECTED');
       const items=parseStreams(data.url);
       state.streamReady=true;
-      streamCache.set(id,{until:Date.now()+60000,items});
+      streamCache.set(cacheKey,{until:Date.now()+60000,items});
       return items;
     } finally { busy=false; }
   }
-  return {run,status:()=>({...state,playerRecognized:!!movieData}),movie,stream};
+  return {run,status:()=>({...state,playerRecognized:!!movieData}),movie,stream,episodes};
 }
 module.exports={createProbe};
 if(require.main===module) {
-  const probe=createProbe({login:process.env.REZKA_LOGIN,password:process.env.REZKA_PASSWORD});
+  const probe=createProbe({login:process.env.REZKA_LOGIN,password:process.env.REZKA_PASSWORD,filmUrl:process.env.REZKA_FILM_URL});
   probe.run().then(result=>console.log(JSON.stringify(result)));
 }

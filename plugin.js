@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  if (window.lampa_my_online_v05) return;
+  if (window.lampa_my_online_v06) return;
   var API = "__API_ORIGIN__";
   var script = document.currentScript;
   if (!API || API === '__API_ORIGIN__') {
@@ -11,7 +11,7 @@
   var L = window.Lampa, $ = window.jQuery;
   function notify(text) { if (L && L.Noty) L.Noty.show(text); }
   if (!L || !$ || !L.Listener || !L.Select || !L.Player) { notify('Мой онлайн: несовместимая версия Lampa'); return; }
-  window.lampa_my_online_v05 = true;
+  window.lampa_my_online_v06 = true;
   var busy = false;
   function restore() { if (L.Controller) L.Controller.toggle('full_start'); }
   function menu(title, items, callback) {
@@ -30,7 +30,7 @@
     $.ajax({url:API+route,dataType:'json',timeout:90000,cache:false,headers:privateRequest?{Authorization:'Bearer '+code}:{},
       success:function (data) {
         busy = false;
-        if (!data || data.ok !== true || data.version !== '0.5.0') { notify('API_MISMATCH: обновите все файлы на Render до v0.5.0'); failed(); return; }
+        if (!data || data.ok !== true || data.version !== '0.6.0') { notify('API_MISMATCH: обновите все файлы на Render до v0.6.0'); failed(); return; }
         try { callback(data); } catch (e) { notify('CLIENT_ERROR: '+e.message); failed(); }
       },error:function (xhr,status) {
         busy = false;
@@ -49,11 +49,15 @@
     });
     return result;
   }
-  function launchMovie(movie, translation, items, preferred) {
+  function streamRoute(id,selection) {
+    return '/api/rezka/stream?translator='+encodeURIComponent(id)+(selection?'&season='+selection.season+'&episode='+selection.episode:'');
+  }
+  function launchMovie(movie, translation, items, preferred, selection) {
     var quality=qualities(items),keys=Object.keys(quality);
     if(!keys.length) { notify('NO_PLAYABLE_STREAMS'); return; }
     var active=translation;
-    var play={url:preferred || quality[keys[0]],quality:quality,title:movie.title+' / '+translation.title};
+    var displayTitle=movie.title+(selection?' • S'+selection.season+' E'+selection.episode:'');
+    var play={url:preferred || quality[keys[0]],quality:quality,title:displayTitle+' / '+translation.title,launch_player:'inner'};
     var panel=L.PlayerPanel;
     var canSwitch=panel && panel.quality && panel.setTracks && panel.listener && panel.listener.send && L.Player.playdata;
     function current() { return L.Player.playdata()===play && (!L.Player.opened || L.Player.opened()); }
@@ -64,14 +68,14 @@
           var oldQuality=play.quality || {};
           var oldKey=Object.keys(oldQuality).filter(function (key) { return oldQuality[key]===play.url; })[0];
           function restoreTracks() { if(current()) { play.voiceovers=tracks(); panel.setTracks(play.voiceovers); } }
-          request('/api/rezka/stream?translator='+encodeURIComponent(t.id),function (result) {
+          request(streamRoute(t.id,selection),function (result) {
             if(!current()) return;
             var next=qualities(result.items),labels=Object.keys(next);
             if(!labels.length) { restoreTracks(); notify('NO_PLAYABLE_STREAMS: оставлена прежняя озвучка'); return; }
             var selected=Object.prototype.hasOwnProperty.call(next,oldKey)?oldKey:labels[0];
             active={id:t.id,title:t.name};
             play.quality=next;
-            play.title=movie.title+' / '+t.name;
+            play.title=displayTitle+' / '+t.name;
             play.voiceovers=tracks();
             panel.quality(next,next[selected]);
             panel.setTracks(play.voiceovers);
@@ -101,9 +105,17 @@
       var options=(movie.translations || []).map(function (t) { return {title:t.name,id:t.id}; });
       if(!options.length) { notify('Озвучки не найдены'); return; }
       menu(movie.title+' • выберите озвучку',options,function (translation) {
-        request('/api/rezka/stream?translator='+encodeURIComponent(translation.id),function (result) {
-          menu(movie.title+' • качество',result.items,function (version) {
-            launchMovie(movie,translation,result.items,version.url);
+        function load(selection) {
+          request(streamRoute(translation.id,selection),function (result) { launchMovie(movie,translation,result.items,null,selection); },true);
+        }
+        if(movie.type!=='series') { load(); return; }
+        request('/api/rezka/episodes?translator='+encodeURIComponent(translation.id),function (result) {
+          var seasons=[];
+          (result.items || []).forEach(function (e) { if(!seasons.some(function (s) { return s.season===e.season; })) seasons.push({title:'Сезон '+e.season,season:e.season}); });
+          if(!seasons.length) { notify('EPISODES_NOT_RECOGNIZED'); return; }
+          menu(movie.title+' • сезон',seasons,function (season) {
+            var episodes=result.items.filter(function (e) { return e.season===season.season; }).map(function (e) {return {title:e.title || 'Серия '+e.episode,season:e.season,episode:e.episode};});
+            menu(movie.title+' • сезон '+season.season,episodes,function (episode) {load({season:episode.season,episode:episode.episode});});
           });
         },true);
       });
@@ -123,8 +135,8 @@
   }
   function open(movie) {
     var title = movie.title || movie.name || movie.original_title || 'Фильм';
-    menu('Мой онлайн v0.5 • '+title,[
-      {title:'Rezka: Гладиатор (1986) — проверка фильма',action:'movie'},
+    menu('Мой онлайн v0.6 • '+title,[
+      {title:'Rezka: запустить проверочный фильм',action:'movie'},
       {title:'Ввести код доступа к серверу',action:'code'},
       {title:'Проверить источники фильма',action:'search'},
       {title:'Запустить тестовый ролик',action:'demo'},
@@ -138,22 +150,22 @@
       else if (item.action === 'rezka') request('/api/rezka/status',function (d) { notify('Rezka • '+d.rezka.code+' • '+d.rezka.message); });
       else if (item.action === 'health') request('/health',function (d) { notify('OK • сервер '+d.version+' • Rezka: '+(d.rezkaConnected?'ссылка получена':'экспериментальный режим')+' • '+API); });
       else if (item.action === 'search') request('/api/search?q='+encodeURIComponent(title.slice(0,200)),function () { notify('Источники для «'+title+'» не подключены. Выберите «Запустить тестовый ролик». Rezka не подключена.'); });
-      else notify('Экспериментальная проверка фильма «Гладиатор» (1986). Поиск других фильмов и сериалы пока не подключены.');
+      else notify('Проверочное видео задаётся в Render через REZKA_FILM_URL. Для сериалов доступны сезон и серия. Общий поиск пока не подключён.');
     });
   }
   function add(e) {
     if (e.type !== 'complite' || !e.object || !e.object.activity) return;
     try {
       var root = e.object.activity.render();
-      if (root.find('.view--my-online-v05').length) return;
+      if (root.find('.view--my-online-v06').length) return;
       var box = root.find('.full-start-new__buttons, .full-start__buttons').eq(0);
       if (!box.length) box = root.find('.view--torrent').parent().eq(0);
       if (!box.length) return;
-      var btn = $('<div class="full-start__button selector view--my-online-v05"><svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg><span>Мой онлайн</span></div>');
+      var btn = $('<div class="full-start__button selector view--my-online-v06"><svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg><span>Мой онлайн</span></div>');
       btn.on('hover:enter',function () { try { open(e.data && e.data.movie || {}); } catch (err) { notify('MENU_ERROR: '+err.message); } });
       box.append(btn);
     } catch (err) { notify('BUTTON_ERROR: '+err.message); }
   }
   L.Listener.follow('full',add);
-  notify('Мой онлайн v0.5.0 установлен');
+  notify('Мой онлайн v0.6.0 установлен');
 })();
