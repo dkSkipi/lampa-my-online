@@ -3,7 +3,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const {timingSafeEqual}=require('node:crypto');
-const VERSION = '0.6.0';
+const VERSION = '0.7.0';
 const {createProbe} = require('./rezka');
 const DEMO = 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4';
 function origin(value) {
@@ -32,20 +32,27 @@ function createServer(config = {}) {
       const u = new URL(req.url, 'http://localhost');
       if (u.pathname === '/health') return send(200,{ok:true,version:VERSION,provider:'rezka-experimental',rezkaConnected:probe.status().streamReady===true});
       if (u.pathname === '/api/rezka/status') return send(200,{ok:true,version:VERSION,rezka:probe.status()});
-      if (['/api/rezka/movie','/api/rezka/stream','/api/rezka/episodes'].includes(u.pathname)) {
+      if (['/api/rezka/movie','/api/rezka/stream','/api/rezka/episodes','/api/rezka/search'].includes(u.pathname)) {
         if(!tokenValid) return send(503,{ok:false,error:{code:'ACCESS_CODE_NOT_CONFIGURED',message:'Задайте MY_ONLINE_TOKEN: 16–128 латинских букв, цифр, дефисов или подчёркиваний.'}});
         const supplied=(req.headers.authorization || '').replace(/^Bearer /,'');
         const a=Buffer.from(token),b=Buffer.from(supplied);
         if(a.length!==b.length || !timingSafeEqual(a,b)) return send(401,{ok:false,error:{code:'ACCESS_DENIED',message:'Введите код доступа в меню плагина.'}});
         try {
-          if(u.pathname === '/api/rezka/movie') return send(200,{ok:true,version:VERSION,movie:probe.movie()});
+          if(u.pathname === '/api/rezka/search') {
+            const q=(u.searchParams.get('q') || '').trim();
+            if(!q || q.length>200) return send(400,{ok:false,error:{code:'INVALID_QUERY',message:'Введите название от 1 до 200 символов.'}});
+            return send(200,{ok:true,version:VERSION,items:await probe.search(q)});
+          }
+          const video=u.searchParams.get('video') || undefined;
+          if(video && !/^\d{1,12}$/.test(video)) return send(400,{ok:false,error:{code:'INVALID_VIDEO',message:'Выберите видео из результатов поиска.'}});
+          if(u.pathname === '/api/rezka/movie') return send(200,{ok:true,version:VERSION,movie:video?await probe.details(video):probe.movie()});
           const id=u.searchParams.get('translator') || '';
           if(!/^\d{1,12}$/.test(id)) return send(400,{ok:false,error:{code:'INVALID_TRANSLATOR',message:'Выберите озвучку из списка.'}});
-          if(u.pathname === '/api/rezka/episodes') return send(200,{ok:true,version:VERSION,items:await probe.episodes(id)});
-          const items=await probe.stream(id,{season:Number(u.searchParams.get('season')),episode:Number(u.searchParams.get('episode'))});
+          if(u.pathname === '/api/rezka/episodes') return send(200,{ok:true,version:VERSION,items:await probe.episodes(id,video)});
+          const items=await probe.stream(id,{season:Number(u.searchParams.get('season')),episode:Number(u.searchParams.get('episode'))},video);
           return send(200,{ok:true,version:VERSION,items});
         } catch(error) {
-          const safe=['CHECKING','AUTH_REQUIRED','LOGIN_REJECTED','PAGE_UNRECOGNIZED','SESSION_EXPIRED','PLAYER_NOT_RECOGNIZED','INVALID_TRANSLATOR','WAIT_AND_RETRY','STREAM_INVALID_JSON','STREAM_REJECTED','STREAM_FORMAT_UNKNOWN','NO_PLAYABLE_STREAMS','BLOCKED','RATE_LIMITED','REDIRECT_REJECTED','EPISODES_NOT_RECOGNIZED','EPISODE_NOT_AVAILABLE'];
+          const safe=['CHECKING','AUTH_REQUIRED','LOGIN_REJECTED','PAGE_UNRECOGNIZED','SESSION_EXPIRED','PLAYER_NOT_RECOGNIZED','INVALID_TRANSLATOR','WAIT_AND_RETRY','STREAM_INVALID_JSON','STREAM_REJECTED','STREAM_FORMAT_UNKNOWN','NO_PLAYABLE_STREAMS','BLOCKED','RATE_LIMITED','REDIRECT_REJECTED','EPISODES_NOT_RECOGNIZED','EPISODE_NOT_AVAILABLE','SEARCH_FORMAT_UNKNOWN','INVALID_QUERY','VIDEO_SELECTION_EXPIRED'];
           const code=safe.includes(error.message)?error.message:'PROVIDER_ERROR';
           return send(502,{ok:false,error:{code,message:'Не удалось получить данные плеера. Запишите код ошибки; пароль присылать не нужно.'}});
         }
@@ -53,11 +60,9 @@ function createServer(config = {}) {
       if (u.pathname === '/plugin.js') return send(200,template.replace('"__API_ORIGIN__"', JSON.stringify(publicBase)), 'application/javascript; charset=utf-8');
       if (u.pathname === '/api/demo') return send(200,{ok:true,version:VERSION,provider:'demo',items:[{title:'Тестовый ролик: цветы (MDN, CC0)',versions:[{name:'MP4',url:DEMO}]}]});
       if (u.pathname === '/api/search') {
-        const q = (u.searchParams.get('q') || '').trim();
-        if (!q || q.length > 200) return send(400,{ok:false,error:{code:'INVALID_QUERY',message:'Название должно содержать от 1 до 200 символов'}});
-        return send(200,{ok:true,version:VERSION,provider:'demo',items:[],message:'Источники фильма не подключены. Rezka не подключена. Для проверки выберите тестовый ролик.'});
+        return send(410,{ok:false,error:{code:'API_MOVED',message:'Используйте защищённый /api/rezka/search в плагине v0.7.'}});
       }
-      if (u.pathname === '/') return send(200,'<!doctype html><meta charset="utf-8"><title>Мой онлайн 0.6</title><h1>Мой онлайн v0.6.0</h1><p>Сервер работает. Экспериментальная проверка фильма Rezka доступна в меню Lampa.</p><ul><li><a href="/health">Проверить сервер</a></li><li><a href="/plugin.js">Плагин Lampa</a></li><li><a href="/api/demo">Тестовый каталог</a></li></ul><p>Проверка видео в браузере (не проверяет плеер телевизора):</p><video controls width="480" src="'+DEMO+'"></video>','text/html; charset=utf-8');
+      if (u.pathname === '/') return send(200,'<!doctype html><meta charset="utf-8"><title>Мой онлайн 0.7</title><h1>Мой онлайн v0.7.0</h1><p>Сервер работает. Поиск Rezka доступен в меню «Мой онлайн» в Lampa.</p><ul><li><a href="/health">Проверить сервер</a></li><li><a href="/plugin.js">Плагин Lampa</a></li><li><a href="/api/demo">Тестовый каталог</a></li></ul><p>Проверка видео в браузере (не проверяет плеер телевизора):</p><video controls width="480" src="'+DEMO+'"></video>','text/html; charset=utf-8');
       return send(404,{ok:false,error:{code:'NOT_FOUND',message:'Адрес не найден'}});
     } catch (_) { return send(400,{ok:false,error:{code:'BAD_REQUEST',message:'Некорректный запрос'}}); }
   });

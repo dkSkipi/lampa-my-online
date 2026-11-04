@@ -11,13 +11,12 @@ test('HTTP contract, CORS, validation and safe origin injection',async () => {
   try {
     const health = await fetch(base+'/health');
     assert.equal(health.headers.get('access-control-allow-origin'),'*');
-    assert.equal((await health.json()).version,'0.6.0');
+    assert.equal((await health.json()).version,'0.7.0');
     const status=await (await fetch(base+'/api/rezka/status')).json();
     assert.equal(status.rezka.code,'AUTH_REQUIRED');
     assert.equal(status.rezka.streamReady,false);
-    assert.equal((await fetch(base+'/api/search')).status,400);
-    const search = await (await fetch(base+'/api/search?q='+encodeURIComponent('Апокалипсис'))).json();
-    assert.deepEqual(search.items,[]);
+    assert.equal((await fetch(base+'/api/search')).status,410);
+    assert.equal((await fetch(base+'/api/rezka/search?q='+encodeURIComponent('Апокалипсис'))).status,503);
     const demo = await (await fetch(base+'/api/demo')).json();
     assert.match(demo.items[0].versions[0].url,/^https:/);
     const js = await (await fetch(base+'/plugin.js',{headers:{host:'evil.invalid'}})).text();
@@ -33,7 +32,7 @@ test('plugin menu, playback, timeout, malformed API, duplicate load',()=>{
   let listener, menu, enter, ajax, played, playlist, notices=[];
   const button = {on:(event,fn)=>{enter=fn;return button;}};
   const box = {length:1,eq(){return this;},append(){}};
-  const root = {find:s=>s==='.view--my-online-v06'?{length:0}:box};
+  const root = {find:s=>s==='.view--my-online-v07'?{length:0}:box};
   const $ = ()=>button;
   $.ajax = options=>{ajax=options;};
   const L = {Storage:{get:()=> 'test-access-code-12345'},Listener:{follow:(event,fn)=>{listener=fn;}},Noty:{show:t=>notices.push(t)},Select:{show:m=>{menu=m;},hide(){}},Controller:{toggle(){}},Player:{play:p=>{played=p;},playlist:p=>{playlist=p;}}};
@@ -48,7 +47,7 @@ test('plugin menu, playback, timeout, malformed API, duplicate load',()=>{
   menu.onSelect(menu.items.find(x=>x.action==='demo'));
   assert.equal(ajax.url,'https://example.org/api/demo');
   assert.equal(ajax.timeout,90000);
-  ajax.success({ok:true,version:'0.6.0',items:[{title:'Demo',versions:[{name:'MP4',url:'https://example.org/video.mp4'}]}]});
+  ajax.success({ok:true,version:'0.7.0',items:[{title:'Demo',versions:[{name:'MP4',url:'https://example.org/video.mp4'}]}]});
   menu.onSelect(menu.items[0]);
   assert.equal(played.url,'https://example.org/video.mp4');
   assert.equal(playlist.length,1);
@@ -61,9 +60,9 @@ test('plugin menu, playback, timeout, malformed API, duplicate load',()=>{
   enter();menu.onSelect(menu.items.find(x=>x.action==='movie'));
   assert.equal(ajax.headers.Authorization,'Bearer test-access-code-12345');
   assert.ok(!ajax.url.includes('test-access-code'));
-  ajax.success({ok:true,version:'0.6.0',movie:{title:'Гладиатор',translations:[{id:'7',name:'Дубляж'}]}});
+  ajax.success({ok:true,version:'0.7.0',movie:{title:'Гладиатор',translations:[{id:'7',name:'Дубляж'}]}});
   menu.onSelect(menu.items[0]);assert.match(ajax.url,/translator=7/);
-  ajax.success({ok:true,version:'0.6.0',items:[{title:'720p / MP4',url:'https://cdn.example/movie.mp4'}]});
+  ajax.success({ok:true,version:'0.7.0',items:[{title:'720p / MP4',url:'https://cdn.example/movie.mp4'}]});
   assert.equal(played.url,'https://cdn.example/movie.mp4');
   assert.equal(played.title,'Гладиатор / Дубляж');
 });
