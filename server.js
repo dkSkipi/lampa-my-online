@@ -3,7 +3,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const {timingSafeEqual}=require('node:crypto');
-const VERSION = '0.4.0';
+const VERSION = '0.5.0';
 const {createProbe} = require('./rezka');
 const DEMO = 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4';
 function origin(value) {
@@ -56,7 +56,7 @@ function createServer(config = {}) {
         if (!q || q.length > 200) return send(400,{ok:false,error:{code:'INVALID_QUERY',message:'Название должно содержать от 1 до 200 символов'}});
         return send(200,{ok:true,version:VERSION,provider:'demo',items:[],message:'Источники фильма не подключены. Rezka не подключена. Для проверки выберите тестовый ролик.'});
       }
-      if (u.pathname === '/') return send(200,'<!doctype html><meta charset="utf-8"><title>Мой онлайн 0.4</title><h1>Мой онлайн v0.4.0</h1><p>Сервер работает. Экспериментальная проверка фильма Rezka доступна в меню Lampa.</p><ul><li><a href="/health">Проверить сервер</a></li><li><a href="/plugin.js">Плагин Lampa</a></li><li><a href="/api/demo">Тестовый каталог</a></li></ul><p>Проверка видео в браузере (не проверяет плеер телевизора):</p><video controls width="480" src="'+DEMO+'"></video>','text/html; charset=utf-8');
+      if (u.pathname === '/') return send(200,'<!doctype html><meta charset="utf-8"><title>Мой онлайн 0.5</title><h1>Мой онлайн v0.5.0</h1><p>Сервер работает. Экспериментальная проверка фильма Rezka доступна в меню Lampa.</p><ul><li><a href="/health">Проверить сервер</a></li><li><a href="/plugin.js">Плагин Lampa</a></li><li><a href="/api/demo">Тестовый каталог</a></li></ul><p>Проверка видео в браузере (не проверяет плеер телевизора):</p><video controls width="480" src="'+DEMO+'"></video>','text/html; charset=utf-8');
       return send(404,{ok:false,error:{code:'NOT_FOUND',message:'Адрес не найден'}});
     } catch (_) { return send(400,{ok:false,error:{code:'BAD_REQUEST',message:'Некорректный запрос'}}); }
   });
