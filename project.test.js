@@ -5,13 +5,16 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const {createServer} = require('./server');
 test('HTTP contract, CORS, validation and safe origin injection',async () => {
-  const server = createServer({base:'https://example.org'});
+  const server = createServer({base:'https://example.org',probe:{status:()=>({code:'AUTH_REQUIRED',streamReady:false})}});
   await new Promise(r=>server.listen(0,'127.0.0.1',r));
   const base = 'http://127.0.0.1:'+server.address().port;
   try {
     const health = await fetch(base+'/health');
     assert.equal(health.headers.get('access-control-allow-origin'),'*');
-    assert.equal((await health.json()).version,'0.2.0');
+    assert.equal((await health.json()).version,'0.3.0');
+    const status=await (await fetch(base+'/api/rezka/status')).json();
+    assert.equal(status.rezka.code,'AUTH_REQUIRED');
+    assert.equal(status.rezka.streamReady,false);
     assert.equal((await fetch(base+'/api/search')).status,400);
     const search = await (await fetch(base+'/api/search?q='+encodeURIComponent('Апокалипсис'))).json();
     assert.deepEqual(search.items,[]);
@@ -30,7 +33,7 @@ test('plugin menu, playback, timeout, malformed API, duplicate load',()=>{
   let listener, menu, enter, ajax, played, playlist, notices=[];
   const button = {on:(event,fn)=>{enter=fn;return button;}};
   const box = {length:1,eq(){return this;},append(){}};
-  const root = {find:s=>s==='.view--my-online-v02'?{length:0}:box};
+  const root = {find:s=>s==='.view--my-online-v03'?{length:0}:box};
   const $ = ()=>button;
   $.ajax = options=>{ajax=options;};
   const L = {Listener:{follow:(event,fn)=>{listener=fn;}},Noty:{show:t=>notices.push(t)},Select:{show:m=>{menu=m;},hide(){}},Controller:{toggle(){}},Player:{play:p=>{played=p;},playlist:p=>{playlist=p;}}};
@@ -45,7 +48,7 @@ test('plugin menu, playback, timeout, malformed API, duplicate load',()=>{
   menu.onSelect(menu.items[1]);
   assert.equal(ajax.url,'https://example.org/api/demo');
   assert.equal(ajax.timeout,90000);
-  ajax.success({ok:true,version:'0.2.0',items:[{title:'Demo',versions:[{name:'MP4',url:'https://example.org/video.mp4'}]}]});
+  ajax.success({ok:true,version:'0.3.0',items:[{title:'Demo',versions:[{name:'MP4',url:'https://example.org/video.mp4'}]}]});
   menu.onSelect(menu.items[0]);
   assert.equal(played.url,'https://example.org/video.mp4');
   assert.equal(playlist.length,1);
