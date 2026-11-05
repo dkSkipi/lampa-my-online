@@ -3,7 +3,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const {timingSafeEqual}=require('node:crypto');
-const VERSION = '0.7.0';
+const VERSION = '0.9.0';
 const {createProbe} = require('./rezka');
 const DEMO = 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4';
 function origin(value) {
@@ -24,7 +24,7 @@ function createServer(config = {}) {
     const headers = {'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET, HEAD, OPTIONS','Access-Control-Allow-Headers':'Content-Type, Authorization','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
     function send(status, data, type = 'application/json; charset=utf-8') {
       res.writeHead(status, {...headers, 'Content-Type':type});
-      res.end(req.method === 'HEAD' ? undefined : typeof data === 'string' ? data : JSON.stringify(data));
+      res.end(req.method === 'HEAD' ? undefined : typeof data === 'string' ? data : JSON.stringify({apiVersion:1,...data}));
     }
     if (req.method === 'OPTIONS') return send(204, '');
     if (!['GET','HEAD'].includes(req.method)) return send(405,{ok:false,error:{code:'METHOD_NOT_ALLOWED',message:'Используйте GET'}});
@@ -49,10 +49,10 @@ function createServer(config = {}) {
           const id=u.searchParams.get('translator') || '';
           if(!/^\d{1,12}$/.test(id)) return send(400,{ok:false,error:{code:'INVALID_TRANSLATOR',message:'Выберите озвучку из списка.'}});
           if(u.pathname === '/api/rezka/episodes') return send(200,{ok:true,version:VERSION,items:await probe.episodes(id,video)});
-          const items=await probe.stream(id,{season:Number(u.searchParams.get('season')),episode:Number(u.searchParams.get('episode'))},video);
+          const items=await probe.stream(id,{season:Number(u.searchParams.get('season')),episode:Number(u.searchParams.get('episode'))},video,u.searchParams.get('refresh')==='1');
           return send(200,{ok:true,version:VERSION,items});
         } catch(error) {
-          const safe=['CHECKING','AUTH_REQUIRED','LOGIN_REJECTED','PAGE_UNRECOGNIZED','SESSION_EXPIRED','PLAYER_NOT_RECOGNIZED','INVALID_TRANSLATOR','WAIT_AND_RETRY','STREAM_INVALID_JSON','STREAM_REJECTED','STREAM_FORMAT_UNKNOWN','NO_PLAYABLE_STREAMS','BLOCKED','RATE_LIMITED','REDIRECT_REJECTED','EPISODES_NOT_RECOGNIZED','EPISODE_NOT_AVAILABLE','SEARCH_FORMAT_UNKNOWN','INVALID_QUERY','VIDEO_SELECTION_EXPIRED'];
+          const safe=['CHECKING','AUTH_REQUIRED','LOGIN_REJECTED','PAGE_UNRECOGNIZED','SESSION_EXPIRED','PLAYER_NOT_RECOGNIZED','INVALID_TRANSLATOR','WAIT_AND_RETRY','STREAM_INVALID_JSON','STREAM_REJECTED','STREAM_FORMAT_UNKNOWN','NO_PLAYABLE_STREAMS','BLOCKED','RATE_LIMITED','REDIRECT_REJECTED','EPISODES_NOT_RECOGNIZED','EPISODE_NOT_AVAILABLE','SEARCH_FORMAT_UNKNOWN','INVALID_QUERY','VIDEO_SELECTION_EXPIRED','NETWORK'];
           const code=safe.includes(error.message)?error.message:'PROVIDER_ERROR';
           return send(502,{ok:false,error:{code,message:'Не удалось получить данные плеера. Запишите код ошибки; пароль присылать не нужно.'}});
         }
@@ -60,9 +60,9 @@ function createServer(config = {}) {
       if (u.pathname === '/plugin.js') return send(200,template.replace('"__API_ORIGIN__"', JSON.stringify(publicBase)), 'application/javascript; charset=utf-8');
       if (u.pathname === '/api/demo') return send(200,{ok:true,version:VERSION,provider:'demo',items:[{title:'Тестовый ролик: цветы (MDN, CC0)',versions:[{name:'MP4',url:DEMO}]}]});
       if (u.pathname === '/api/search') {
-        return send(410,{ok:false,error:{code:'API_MOVED',message:'Используйте защищённый /api/rezka/search в плагине v0.7.'}});
+        return send(410,{ok:false,error:{code:'API_MOVED',message:'Используйте защищённый /api/rezka/search в плагине v0.9.'}});
       }
-      if (u.pathname === '/') return send(200,'<!doctype html><meta charset="utf-8"><title>Мой онлайн 0.7</title><h1>Мой онлайн v0.7.0</h1><p>Сервер работает. Поиск Rezka доступен в меню «Мой онлайн» в Lampa.</p><ul><li><a href="/health">Проверить сервер</a></li><li><a href="/plugin.js">Плагин Lampa</a></li><li><a href="/api/demo">Тестовый каталог</a></li></ul><p>Проверка видео в браузере (не проверяет плеер телевизора):</p><video controls width="480" src="'+DEMO+'"></video>','text/html; charset=utf-8');
+      if (u.pathname === '/') return send(200,'<!doctype html><meta charset="utf-8"><title>Мой онлайн 0.9</title><h1>Мой онлайн v0.9.0</h1><p>Сервер работает. Поиск Rezka доступен в меню «Мой онлайн» в Lampa.</p><ul><li><a href="/health">Проверить сервер</a></li><li><a href="/plugin.js">Плагин Lampa</a></li></ul>','text/html; charset=utf-8');
       return send(404,{ok:false,error:{code:'NOT_FOUND',message:'Адрес не найден'}});
     } catch (_) { return send(400,{ok:false,error:{code:'BAD_REQUEST',message:'Некорректный запрос'}}); }
   });

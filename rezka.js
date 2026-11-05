@@ -81,7 +81,9 @@ function createProbe({login, password, filmUrl=BASE+FILM, fetchImpl=fetch, now=(
     for (let hop=0;hop<4;hop++) {
       if(url.origin!==BASE) throw new UpstreamError('REDIRECT_REJECTED');
       const cookie=Array.from(jar.values()).filter(c=>c.expires>now() && (url.pathname===c.path || url.pathname.startsWith(c.path.endsWith('/')?c.path:c.path+'/'))).map(c=>c.name+'='+c.value).join('; ');
-      const response=await fetchImpl(url.href,{...options,redirect:'manual',signal:AbortSignal.timeout(15000),headers:{'User-Agent':'Mozilla/5.0','Accept':'text/html,application/json','Referer':BASE+'/',...(cookie?{Cookie:cookie}:{}),...options.headers}});
+      let response;
+      try {response=await fetchImpl(url.href,{...options,redirect:'manual',signal:AbortSignal.timeout(15000),headers:{'User-Agent':'Mozilla/5.0','Accept':'text/html,application/json','Referer':BASE+'/',...(cookie?{Cookie:cookie}:{}),...options.headers}});}
+      catch (_) {throw new UpstreamError('NETWORK');}
       remember(response.headers,url.pathname);
       if(response.status>=300 && response.status<400) {
         // Never re-submit credentials on any redirect, even within the site.
@@ -172,7 +174,7 @@ function createProbe({login, password, filmUrl=BASE+FILM, fetchImpl=fetch, now=(
       return items;
     } finally {busy=false;}
   }
-  async function stream(id,selection={},videoId) {
+  async function stream(id,selection={},videoId,refresh=false) {
     const r=await record(videoId),data=r.data;
     const t=data.translations.find(t=>t.id===id);
     if(!t) throw new Error('INVALID_TRANSLATOR');
@@ -184,7 +186,7 @@ function createProbe({login, password, filmUrl=BASE+FILM, fetchImpl=fetch, now=(
     }
     const cacheKey=r.id+':'+id+':'+(fields.season || '')+':'+(fields.episode || '');
     const cached=streamCache.get(cacheKey);
-    if(cached && cached.until>now()) return cached.items;
+    if(!refresh && cached && cached.until>now()) return cached.items;
     if(busy || now()-lastRequest<2000) throw new Error('WAIT_AND_RETRY');
     busy=true;lastRequest=now();
     try {

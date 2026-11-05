@@ -59,3 +59,17 @@ test('search/details API is private, validates inputs and binds title IDs to dow
     await fetch(base+'/api/rezka/episodes?translator=7&video=101',{headers});assert.deepEqual(calls.at(-1),['7','101']);
   } finally {await new Promise(r=>server.close(r));}
 });
+test('explicit refresh bypasses cached CDN URL and keeps cooldown; no extra login attempt',async()=>{
+  let time=1000000,streams=0,pages=0;
+  const probe=createProbe({now:()=>time,fetchImpl:async(url,options)=>{
+    if(!options.method) {pages++;return new Response(page('93568'));}
+    streams++;return new Response(JSON.stringify({success:true,url:'[720p]https://cdn.example/v'+streams+'.mp4'}));
+  }});
+  await probe.run();
+  assert.equal((await probe.stream('7'))[0].url,'https://cdn.example/v1.mp4');
+  assert.equal((await probe.stream('7'))[0].url,'https://cdn.example/v1.mp4');
+  await assert.rejects(probe.stream('7',{},undefined,true),/WAIT_AND_RETRY/);
+  time+=2100;
+  assert.equal((await probe.stream('7',{},undefined,true))[0].url,'https://cdn.example/v2.mp4');
+  assert.equal(pages,1);assert.equal(streams,2);
+});
