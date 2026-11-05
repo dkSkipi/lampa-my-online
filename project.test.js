@@ -11,7 +11,7 @@ test('HTTP contract, CORS, validation and safe origin injection',async () => {
   try {
     const health = await fetch(base+'/health');
     assert.equal(health.headers.get('access-control-allow-origin'),'*');
-    const healthData=await health.json();assert.equal(healthData.version,'0.9.0');assert.equal(healthData.apiVersion,1);
+    const healthData=await health.json();assert.equal(healthData.version,'0.10.0');assert.equal(healthData.apiVersion,1);
     assert.equal(health.headers.get('cache-control'),'no-store');
     const status=await (await fetch(base+'/api/rezka/status')).json();
     assert.equal(status.rezka.code,'AUTH_REQUIRED');
@@ -33,7 +33,7 @@ test('plugin menu, playback, timeout, malformed API, duplicate load',()=>{
   let listener, menu, enter, ajax, played, playlist, notices=[];
   const button = {on:(event,fn)=>{enter=fn;return button;}};
   const box = {length:1,eq(){return this;},append(){}};
-  const root = {find:s=>s==='.view--my-online-v09'?{length:0}:box};
+  const root = {find:s=>s==='.view--my-online-v010'?{length:0}:box};
   const $ = ()=>button;
   $.ajax = options=>{ajax=options;};
   const L = {Storage:{get:()=> 'test-access-code-12345'},Listener:{follow:(event,fn)=>{listener=fn;}},Noty:{show:t=>notices.push(t)},Select:{show:m=>{menu=m;},hide(){}},Controller:{toggle(){}},Player:{play:p=>{played=p;},playlist:p=>{playlist=p;}}};
@@ -58,11 +58,11 @@ test('plugin menu, playback, timeout, malformed API, duplicate load',()=>{
   enter();menu.onSelect(menu.items.find(x=>x.action==='search'));
   assert.equal(ajax.headers.Authorization,'Bearer test-access-code-12345');
   assert.ok(!ajax.url.includes('test-access-code'));
-  ajax.success({ok:true,version:'0.9.0',items:[{id:'93568',title:'Гладиатор',type:'movie'}]});
+  ajax.success({ok:true,version:'0.10.0',items:[{id:'93568',title:'Гладиатор',type:'movie'}]});
   menu.onSelect(menu.items[0]);
-  ajax.success({ok:true,version:'0.9.0',movie:{title:'Гладиатор',translations:[{id:'7',name:'Дубляж'}]}});
+  ajax.success({ok:true,version:'0.10.0',movie:{title:'Гладиатор',translations:[{id:'7',name:'Дубляж'}]}});
   menu.onSelect(menu.items[0]);assert.match(ajax.url,/translator=7/);
-  ajax.success({ok:true,version:'0.9.0',items:[{title:'720p / MP4',url:'https://cdn.example/movie.mp4'}]});
+  ajax.success({ok:true,version:'0.10.0',items:[{title:'720p / MP4',url:'https://cdn.example/movie.mp4'}]});
   assert.equal(played.url,'https://cdn.example/movie.mp4');
   assert.equal(played.title,'Гладиатор / Дубляж');
 });

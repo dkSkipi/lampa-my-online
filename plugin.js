@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  if (window.lampa_my_online_v09) return;
+  if (window.lampa_my_online_v010) return;
   var API = "__API_ORIGIN__";
   var script = document.currentScript;
   if (!API || API === '__API_ORIGIN__') {
@@ -11,7 +11,7 @@
   var L = window.Lampa, $ = window.jQuery;
   function notify(text) { if (L && L.Noty) L.Noty.show(text); }
   if (!L || !$ || !L.Listener || !L.Select || !L.Player) { notify('Мой онлайн: несовместимая версия Lampa'); return; }
-  window.lampa_my_online_v09 = true;
+  window.lampa_my_online_v010 = true;
   var busy = false;
   var playbackSession=null;
   var watchKey='my_online_watch_v1';
@@ -96,7 +96,7 @@
     function send() {$.ajax({url:API+route,dataType:'json',timeout:90000,cache:false,headers:privateRequest?{Authorization:'Bearer '+code}:{},
       success:function (data) {
         busy = false;
-        if (!data || data.ok !== true || data.apiVersion!==1 && data.version !== '0.9.0') { notify('API_MISMATCH: обновите сервер и перезапустите Lampa'); failed(); return; }
+        if (!data || data.ok !== true || data.apiVersion!==1 && data.version !== '0.10.0') { notify('API_MISMATCH: обновите сервер и перезапустите Lampa'); failed(); return; }
         try { callback(data); } catch (e) { notify('CLIENT_ERROR: '+e.message); failed(); }
       },error:function (xhr,status) {
         var errorCode=xhr.responseJSON && xhr.responseJSON.error && xhr.responseJSON.error.code;
@@ -265,14 +265,91 @@
       if(backController && L.Controller) L.Controller.toggle(backController);else restore();
     });
   }
+  var backupBusy=false;
+  function backupLibrary() {if(!window.MyOnlineBackup) throw new Error('Обновите все файлы сервера и перезапустите Lampa');return window.MyOnlineBackup;}
+  function exportBackup() {
+    var play=L.Player.playdata && L.Player.playdata();
+    if(play && play.my_online_watch && play.timeline) remember(play,{time:play.timeline.time,duration:play.timeline.duration},false);
+    return backupLibrary().create(L.Storage);
+  }
+  function confirmBackup(input,controller) {
+    try {
+      if(L.Player.opened && L.Player.opened()) {notify('Закройте видео перед восстановлением');return;}
+      var backup=backupLibrary().parse(input),count=backupLibrary().summary(backup);
+      menu('Копия: видео '+count.videos+', записей прогресса '+count.episodes,[
+        {title:'Объединить с текущей историей',mode:'merge',subtitle:'Более новые позиции сохранятся; предпочтения возьмутся из копии'},
+        {title:'Заменить историю и предпочтения',mode:'replace'},
+        {title:'Отмена'}
+      ],function(item){
+        if(!item.mode) return;
+        menu(item.mode==='replace'?'Заменить текущие данные этой копией?':'Восстановить данные из копии?',[
+          {title:'Восстановить',yes:true},{title:'Отмена'}
+        ],function(answer){
+          if(!answer.yes) return;
+          if(L.Player.opened && L.Player.opened()) {notify('Закройте видео перед восстановлением');return;}
+          try {backupLibrary().apply(L.Storage,backup,item.mode);notify('Копия восстановлена. Откройте карточку заново.');}catch(error){notify(error.message);}
+        },controller);
+      },controller);
+    } catch(error){notify(error.message);}
+  }
+  function backupTransfer(method,backup,done) {
+    if(backupBusy) {notify('Перенос копии уже выполняется');return;}
+    backupBusy=true;
+    var code=stored('my_online_access_code','');
+    $.ajax({url:API+'/api/backup',type:method,dataType:'json',contentType:'application/json',timeout:30000,cache:false,headers:{Authorization:'Bearer '+code},data:backup?JSON.stringify(backup):undefined,
+      success:function(data){backupBusy=false;if(data && data.ok) {try{done(data);}catch(error){notify(error.message);}}else notify('Сервер не вернул резервную копию');},
+      error:function(xhr){backupBusy=false;notify(xhr.responseJSON && xhr.responseJSON.error?xhr.responseJSON.error.message:'Перенос не выполнен. Проверьте связь и повторите.');}});
+  }
+  function saveBackupFile() {
+    try {
+      if(!window.Blob || !window.URL || !window.URL.createObjectURL) {notify('Сохранение файла недоступно. Используйте перенос через браузер.');return;}
+      var url=window.URL.createObjectURL(new window.Blob([JSON.stringify(exportBackup(),null,2)],{type:'application/json;charset=utf-8'}));
+      var link=document.createElement('a');link.href=url;link.download='my-online-backup-'+new Date().toISOString().slice(0,10)+'.json';link.style.display='none';document.body.appendChild(link);link.click();document.body.removeChild(link);
+      if(typeof setTimeout==='function') setTimeout(function(){window.URL.revokeObjectURL(url);},60000);
+      notify('Запрошено сохранение файла. Проверьте загрузки устройства.');
+    } catch(error){notify(error.message || 'Не удалось сохранить файл. Используйте перенос через браузер.');}
+  }
+  function openBackupFile(controller) {
+    try {
+      if(!window.FileReader) {notify('Выбор файла недоступен. Используйте перенос через браузер.');return;}
+      var input=document.createElement('input');input.type='file';input.accept='.json,application/json';input.style.display='none';document.body.appendChild(input);
+      function remove(){if(input.parentNode) input.parentNode.removeChild(input);}
+      input.addEventListener('cancel',remove);
+      input.addEventListener('change',function(){
+        var file=input.files && input.files[0];remove();if(!file) return;
+        if(file.size>backupLibrary().limit) {notify('Файл больше 2 МБ');return;}
+        var reader=new window.FileReader();reader.onload=function(){confirmBackup(reader.result,controller);};reader.onerror=function(){notify('Не удалось прочитать файл');};reader.readAsText(file);
+      });input.click();
+    } catch(error){notify(error.message || 'Не удалось открыть файл. Используйте перенос через браузер.');}
+  }
+  function backupMenu(controller) {
+    menu('Резервная копия',[
+      {title:'Подготовить для браузера (для ТВ)',action:'send',subtitle:'Временно передать копию вашему Render-серверу на пять минут'},
+      {title:'Получить из браузера',action:'receive'},
+      {title:'Сохранить файл на этом устройстве',action:'file'},
+      {title:'Восстановить из файла на этом устройстве',action:'open'}
+    ],function(item){
+      if(item.action==='file') saveBackupFile();
+      else if(item.action==='open') openBackupFile(controller);
+      else if(item.action==='receive') backupTransfer('GET',null,function(data){confirmBackup(data.backup,controller);});
+      else if(item.action==='send') {
+        menu('Передать историю вашему серверу на пять минут?', [{title:'Подготовить копию',yes:true},{title:'Отмена'}],function(answer){
+          if(!answer.yes) return;
+          try {backupTransfer('POST',exportBackup(),function(){notify('Копия готова на пять минут. На компьютере или телефоне откройте '+API+'/backup');});}catch(error){notify(error.message);}
+        },controller);
+      }
+    },controller);
+  }
   function settings() {
     var controller=L.Controller && L.Controller.enabled?L.Controller.enabled().name:'full_start',p=prefs();
     menu('Мой онлайн • настройки',[
       {title:'Предпочитаемая озвучка: '+label(p.voice || 'не выбрана'),action:'voice'},
       {title:'Качество по умолчанию: '+label(p.quality || 'авто'),action:'quality'},
+      {title:'Резервная копия',action:'backup'},
       {title:'Код доступа',action:'code'}
     ],function(item){
       if(item.action==='code') {editCode(controller);return;}
+      if(item.action==='backup') {backupMenu(controller);return;}
       if(item.action==='voice') {
         if(!L.Input || !L.Input.edit) {notify('Ввод недоступен в этой версии Lampa');return;}
         L.Input.edit({title:'Студия озвучки или часть названия; пусто — без предпочтения',value:p.voice || '',nosave:true,free:true},function(value){p.voice=String(value || '').trim().slice(0,100);setPrefs(p);if(L.Controller) L.Controller.toggle(controller);});
@@ -281,7 +358,7 @@
   }
   if(L.SettingsApi && L.SettingsApi.addComponent && L.SettingsApi.addParam) {
     L.SettingsApi.addComponent({component:'my_online',name:'Мой онлайн',icon:'<svg viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>'});
-    L.SettingsApi.addParam({component:'my_online',param:{name:'my_online_options',type:'button'},field:{name:'Параметры просмотра',description:'Озвучка, качество и код доступа'},onChange:settings});
+    L.SettingsApi.addParam({component:'my_online',param:{name:'my_online_options',type:'button'},field:{name:'Параметры просмотра',description:'Озвучка, качество, резервная копия и код доступа'},onChange:settings});
   }
   function rezkaMovie(videoId,continueNow) {
     request('/api/rezka/movie'+(videoId?'?video='+encodeURIComponent(videoId):''),function (data) {
@@ -390,20 +467,20 @@
     if (e.type !== 'complite' || !e.object || !e.object.activity) return;
     try {
       var root = e.object.activity.render();
-      if (root.find('.view--my-online-v09').length) return;
+      if (root.find('.view--my-online-v010').length) return;
       var box = root.find('.full-start-new__buttons, .full-start__buttons').eq(0);
       if (!box.length) box = root.find('.view--torrent').parent().eq(0);
       if (!box.length) return;
-      var btn = $('<div class="full-start__button selector view--my-online-v09"><svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg><span>Мой онлайн</span></div>');
+      var btn = $('<div class="full-start__button selector view--my-online-v010"><svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg><span>Мой онлайн</span></div>');
       btn.on('hover:enter',function () { try { open(e.data && e.data.movie || {}); } catch (err) { notify('MENU_ERROR: '+err.message); } });
-      box.append(btn);
+      if(box.prepend) box.prepend(btn);else box.append(btn);
       var card=e.data && e.data.movie || {},link=cardLink(card);
       if(link && watched({id:link.video}).translation) {
         var resume=$('<div class="full-start__button selector view--my-online-resume"><span>Продолжить онлайн</span></div>');
-        resume.on('hover:enter',function(){resumeCard(card);});box.append(resume);
+        resume.on('hover:enter',function(){resumeCard(card);});if(btn.after) btn.after(resume);else box.append(resume);
       }
     } catch (err) { notify('BUTTON_ERROR: '+err.message); }
   }
   L.Listener.follow('full',add);
-  notify('Мой онлайн v0.9.0 установлен');
+  notify('Мой онлайн v0.10.0 установлен');
 })();

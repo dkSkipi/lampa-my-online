@@ -8,7 +8,7 @@ test('Lampa search ranks year, chooses explicit title and carries video ID into 
   let follow,enter,menu,ajax,play;
   const button={on:(event,fn)=>{enter=fn;return button;}};
   const box={length:1,eq(){return this;},append(){}};
-  const root={find:s=>s==='.view--my-online-v09'?{length:0}:box};
+  const root={find:s=>s==='.view--my-online-v010'?{length:0}:box};
   const $=()=>button;$.ajax=opts=>{ajax=opts;};
   const L={Listener:{follow:(event,fn)=>{follow=fn;}},Storage:{get:()=> 'test-code-123456789'},Noty:{show(){}},Controller:{toggle(){}},Select:{show:opts=>{menu=opts;},hide(){}},Player:{play:item=>{play=item;},playlist(){},playdata:()=>play,opened:()=>true},PlayerPanel:{quality(){},setTracks(){},listener:{send(){}}}};
   const context=vm.createContext({window:{Lampa:L,jQuery:$},document:{currentScript:{src:'https://example.org/plugin.js'},createElement:()=>({set href(s){const u=new URL(s);this.protocol=u.protocol;this.host=u.host;}})}});
@@ -17,15 +17,15 @@ test('Lampa search ranks year, chooses explicit title and carries video ID into 
   enter();menu.onSelect(menu.items.find(item=>item.action==='search'));
   assert.equal(new URL(ajax.url).searchParams.get('q'),'Название & сериал');
   assert.equal(ajax.headers.Authorization,'Bearer test-code-123456789');
-  ajax.success({ok:true,version:'0.9.0',items:[{id:'888',title:'Название',year:'1990',type:'movie'},{id:'777',title:'Название',year:'2020',type:'series'}]});
+  ajax.success({ok:true,version:'0.10.0',items:[{id:'888',title:'Название',year:'1990',type:'movie'},{id:'777',title:'Название',year:'2020',type:'series'}]});
   assert.equal(menu.items[0].video,'777');
   menu.onSelect(menu.items[0]);assert.match(ajax.url,/movie\?video=777/);
-  ajax.success({ok:true,version:'0.9.0',movie:{id:'777',type:'series',title:'Название',translations:[{id:'7',name:'Первая'},{id:'8',name:'Вторая'}]}});
+  ajax.success({ok:true,version:'0.10.0',movie:{id:'777',type:'series',title:'Название',translations:[{id:'7',name:'Первая'},{id:'8',name:'Вторая'}]}});
   menu.onSelect(menu.items[0]);assert.match(ajax.url,/episodes\?translator=7&video=777/);
-  ajax.success({ok:true,version:'0.9.0',items:[{season:2,episode:3,title:'Серия 3'}]});
+  ajax.success({ok:true,version:'0.10.0',items:[{season:2,episode:3,title:'Серия 3'}]});
   menu.onSelect(menu.items[0]);menu.onSelect(menu.items[0]);
   assert.match(ajax.url,/translator=7&season=2&episode=3&video=777/);
-  ajax.success({ok:true,version:'0.9.0',items:[{quality:'720p',format:'MP4',url:'https://cdn.example/777.mp4'}]});
+  ajax.success({ok:true,version:'0.10.0',items:[{quality:'720p',format:'MP4',url:'https://cdn.example/777.mp4'}]});
   assert.equal(play.launch_player,'inner');assert.match(play.title,/S2 E3/);
   play.voiceovers[1].onSelect();assert.match(ajax.url,/translator=8&season=2&episode=3&video=777/);
 });

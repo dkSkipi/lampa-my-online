@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Мой онлайн — резервная копия</title>
+<style>body{font:18px/1.5 system-ui,sans-serif;color:#eee;background:#15171d;max-width:760px;margin:40px auto;padding:0 20px}h1{font-size:30px}section{background:#232630;border-radius:14px;padding:20px;margin:20px 0}button,input{font:inherit;max-width:100%;box-sizing:border-box}input[type=password]{width:100%;padding:12px}button{padding:12px 18px;border:0;border-radius:8px;background:#87baff;color:#111;cursor:pointer;margin-top:14px}button:disabled{opacity:.5;cursor:wait}label{display:block}#status{white-space:pre-wrap}small{color:#bdc5d5}</style>
+</head><body><h1>Резервная копия «Мой онлайн»</h1>
+<p>Файл содержит историю и предпочтения. Пароль Rezka, код доступа и видеоссылки в него не включаются.</p>
+<label>Код доступа MY_ONLINE_TOKEN<input type="password" id="code" autocomplete="off" maxlength="128"></label>
+<small>Введите тот же код, что настроен на телевизоре. Он передаётся только вашему серверу для доступа и в файл не сохраняется.</small>
+<section><h2>Сохранить копию с телевизора</h2><p>На телевизоре: Мой онлайн → Настройки → Резервная копия → Подготовить для браузера. Затем нажмите кнопку ниже в течение пяти минут.</p><button id="download">Скачать подготовленную копию</button></section>
+<section><h2>Передать файл на телевизор</h2><p>Выберите ранее сохранённый файл. После передачи на телевизоре выберите «Получить из браузера» и подтвердите восстановление.</p><input id="file" type="file" accept=".json,application/json"><button id="upload">Передать копию на сервер для телевизора</button><p><small>На сервере хранится только одна копия в памяти, доступная по коду. Она исчезнет через пять минут либо при перезапуске сервиса. Это временный перенос, не постоянное хранение.</small></p></section>
+<p id="status" role="status" aria-live="polite"></p>
+<script src="/backup-lib.js"></script><script src="/backup-page.js"></script></body></html>
