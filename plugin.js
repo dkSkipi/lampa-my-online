@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  if (window.lampa_my_online_v010) return;
+  if (window.lampa_my_online_v0101) return;
   var API = "__API_ORIGIN__";
   var script = document.currentScript;
   if (!API || API === '__API_ORIGIN__') {
@@ -11,9 +11,21 @@
   var L = window.Lampa, $ = window.jQuery;
   function notify(text) { if (L && L.Noty) L.Noty.show(text); }
   if (!L || !$ || !L.Listener || !L.Select || !L.Player) { notify('Мой онлайн: несовместимая версия Lampa'); return; }
-  window.lampa_my_online_v010 = true;
+  window.lampa_my_online_v0101 = true;
   var busy = false;
   var playbackSession=null;
+  var recoveryWarning=null,selectOwner=null;
+  if(L.Select.listener && L.Select.listener.follow) L.Select.listener.follow('preshow',function(event){selectOwner=event && event.active && event.active.my_online_recovery_owner || null;});
+  function cancelRecoveryWarning() {
+    var warning=recoveryWarning;if(!warning) return;
+    recoveryWarning=null;
+    if(typeof clearTimeout==='function' && warning.timer) clearTimeout(warning.timer);
+    warning.play.my_online_error_shown=false;
+    if(warning.visible && selectOwner===warning && L.Select.listener) {
+      L.Select.hide();selectOwner=null;if(L.Controller) L.Controller.toggle('player');
+    }
+  }
+  function playerElement() {try{return L.PlayerVideo && L.PlayerVideo.video?L.PlayerVideo.video():null;}catch(_){return null;}}
   var watchKey='my_online_watch_v1';
   function stored(key,fallback) {try {return L.Storage?L.Storage.get(key,fallback):fallback;}catch(_){return fallback;}}
   function prefs() {var p=stored('my_online_preferences_v1',{});return p && typeof p==='object'?p:{};}
@@ -51,12 +63,21 @@
     } catch (_) {notify('Не удалось сохранить выбор на устройстве');}
   }
   if(L.Player.listener && L.Player.listener.follow) L.Player.listener.follow('start',function (event) {
+    cancelRecoveryWarning();
     var play=event && (event.data || event);
     if(play && play.my_online_preferred) {play.url=play.my_online_preferred;if(L.PlayerPanel && L.PlayerPanel.quality) L.PlayerPanel.quality(play.quality,play.url);}
     remember(play);
   });
   if(L.PlayerVideo && L.PlayerVideo.listener && L.PlayerVideo.listener.follow) {
+    L.PlayerVideo.listener.follow('canplay',cancelRecoveryWarning);
+    L.PlayerVideo.listener.follow('loadeddata',cancelRecoveryWarning);
+    L.PlayerVideo.listener.follow('destroy',cancelRecoveryWarning);
+    if(L.Player.listener && L.Player.listener.follow) L.Player.listener.follow('close',cancelRecoveryWarning);
     L.PlayerVideo.listener.follow('timeupdate',function () {
+      if(recoveryWarning) {
+        var media=playerElement();
+        if(media && !media.error && !media.seeking && Number(media.currentTime)>recoveryWarning.time+0.05) cancelRecoveryWarning();
+      }
       var play=L.Player.playdata && L.Player.playdata();
       if(!play || !play.my_online_watch || !play.timeline || Date.now()-(play.my_online_saved_at || 0)<5000) return;
       if(play.timeline.continued===false || play.timeline.waiting_for_user) return;
@@ -66,15 +87,26 @@
       var play=L.Player.playdata && L.Player.playdata();
       if(play && play.my_online_watch && play.timeline && play.timeline.duration) remember(play,{time:play.timeline.duration,duration:play.timeline.duration},false);
     });
-    L.PlayerVideo.listener.follow('error',function () {
+    L.PlayerVideo.listener.follow('error',function (event) {
+      // HLS also emits recoverable errors while loading/seeking/switching URLs.
+      if(!event || event.fatal!==true) return;
       var play=L.Player.playdata && L.Player.playdata();
       if(!play || !play.my_online_recover || play.my_online_error_shown) return;
+      var media=playerElement();
+      if(media && media.error && media.error.code===1) return; // intentionally aborted old source
       play.my_online_error_shown=true;
+      var warning={play:play,url:play.url,media:media,time:media?Number(media.currentTime) || 0:0,visible:false};
+      recoveryWarning=warning;
       function show() {
-        if(L.Player.playdata()!==play || L.Player.opened && !L.Player.opened()) return;
-        L.Select.show({title:'Видео не удалось воспроизвести',items:[{title:'Обновить ссылку и повторить',retry:true},{title:'Закрыть плеер'}],onSelect:function(item){L.Select.hide();if(item.retry) play.my_online_recover();else if(L.Player.close) L.Player.close();},onBack:function(){L.Select.hide();if(L.Controller) L.Controller.toggle('player');}});
+        if(recoveryWarning!==warning) return;
+        var current=playerElement();
+        if(L.Player.playdata()!==play || play.url!==warning.url || L.Player.opened && !L.Player.opened() || current!==warning.media) {cancelRecoveryWarning();return;}
+        if(play.timeline && play.timeline.waiting_for_user || L.Select.opened && L.Select.opened()) {cancelRecoveryWarning();return;}
+        if(current && (current.error && current.error.code===1 || !current.error && (current.seeking || Number(current.currentTime)>warning.time+0.05 || current.readyState>=3))) {cancelRecoveryWarning();return;}
+        warning.visible=true;selectOwner=warning;
+        L.Select.show({my_online_recovery_owner:warning,title:'Видео не удалось воспроизвести',items:[{title:'Обновить ссылку и повторить',retry:true},{title:'Закрыть плеер'}],onSelect:function(item){cancelRecoveryWarning();L.Select.hide();if(item.retry) play.my_online_recover();else if(L.Player.close) L.Player.close();},onBack:function(){cancelRecoveryWarning();L.Select.hide();if(L.Controller) L.Controller.toggle('player');}});
       }
-      if(typeof setTimeout==='function') setTimeout(show,0);else show();
+      if(typeof setTimeout==='function') warning.timer=setTimeout(show,media && !media.error && media.readyState<2?8000:2000);
     });
   }
   function restore() { if (L.Controller) L.Controller.toggle('full_start'); }
@@ -96,7 +128,7 @@
     function send() {$.ajax({url:API+route,dataType:'json',timeout:90000,cache:false,headers:privateRequest?{Authorization:'Bearer '+code}:{},
       success:function (data) {
         busy = false;
-        if (!data || data.ok !== true || data.apiVersion!==1 && data.version !== '0.10.0') { notify('API_MISMATCH: обновите сервер и перезапустите Lampa'); failed(); return; }
+        if (!data || data.ok !== true || data.apiVersion!==1 && data.version !== '0.10.1') { notify('API_MISMATCH: обновите сервер и перезапустите Lampa'); failed(); return; }
         try { callback(data); } catch (e) { notify('CLIENT_ERROR: '+e.message); failed(); }
       },error:function (xhr,status) {
         var errorCode=xhr.responseJSON && xhr.responseJSON.error && xhr.responseJSON.error.code;
@@ -467,11 +499,11 @@
     if (e.type !== 'complite' || !e.object || !e.object.activity) return;
     try {
       var root = e.object.activity.render();
-      if (root.find('.view--my-online-v010').length) return;
+      if (root.find('.view--my-online-v0101').length) return;
       var box = root.find('.full-start-new__buttons, .full-start__buttons').eq(0);
       if (!box.length) box = root.find('.view--torrent').parent().eq(0);
       if (!box.length) return;
-      var btn = $('<div class="full-start__button selector view--my-online-v010"><svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg><span>Мой онлайн</span></div>');
+      var btn = $('<div class="full-start__button selector view--my-online-v0101"><svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg><span>Мой онлайн</span></div>');
       btn.on('hover:enter',function () { try { open(e.data && e.data.movie || {}); } catch (err) { notify('MENU_ERROR: '+err.message); } });
       if(box.prepend) box.prepend(btn);else box.append(btn);
       var card=e.data && e.data.movie || {},link=cardLink(card);
@@ -482,5 +514,5 @@
     } catch (err) { notify('BUTTON_ERROR: '+err.message); }
   }
   L.Listener.follow('full',add);
-  notify('Мой онлайн v0.10.0 установлен');
+  notify('Мой онлайн v0.10.1 установлен');
 })();

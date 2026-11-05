@@ -3,7 +3,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const {timingSafeEqual}=require('node:crypto');
-const VERSION = '0.10.0';
+const VERSION = '0.10.1';
 const {createProbe} = require('./rezka');
 const {createTransfer,readBody}=require('./backup-transfer');
 const DEMO = 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4';
@@ -78,7 +78,7 @@ function createServer(config = {}) {
       if (u.pathname === '/api/search') {
         return send(410,{ok:false,error:{code:'API_MOVED',message:'Используйте защищённый /api/rezka/search в плагине v0.10.'}});
       }
-      if (u.pathname === '/') return send(200,'<!doctype html><meta charset="utf-8"><title>Мой онлайн 0.10</title><h1>Мой онлайн v0.10.0</h1><p>Сервер работает. Поиск Rezka доступен в меню «Мой онлайн» в Lampa.</p><ul><li><a href="/health">Проверить сервер</a></li><li><a href="/plugin.js">Плагин Lampa</a></li><li><a href="/backup">Резервная копия</a></li></ul>','text/html; charset=utf-8');
+      if (u.pathname === '/') return send(200,'<!doctype html><meta charset="utf-8"><title>Мой онлайн 0.10</title><h1>Мой онлайн v0.10.1</h1><p>Сервер работает. Поиск Rezka доступен в меню «Мой онлайн» в Lampa.</p><ul><li><a href="/health">Проверить сервер</a></li><li><a href="/plugin.js">Плагин Lampa</a></li><li><a href="/backup">Резервная копия</a></li></ul>','text/html; charset=utf-8');
       return send(404,{ok:false,error:{code:'NOT_FOUND',message:'Адрес не найден'}});
     } catch (_) { return send(400,{ok:false,error:{code:'BAD_REQUEST',message:'Некорректный запрос'}}); }
   });

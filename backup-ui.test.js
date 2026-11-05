@@ -20,7 +20,7 @@ function harness(playing=false){
   return {store,elements,existing,writes,notices,openBackup,again:()=>follow(event),get menu(){return menu;},get ajax(){return ajax;}};
 }
 test('My online is first and Resume second without changing other plugin buttons or duplicating on rerender',()=>{
-  const h=harness();assert.match(h.elements[0].className,/view--my-online-v010/);assert.match(h.elements[1].className,/view--my-online-resume/);
+  const h=harness();assert.match(h.elements[0].className,/view--my-online-v0101/);assert.match(h.elements[1].className,/view--my-online-resume/);
   assert.equal(h.elements[2],h.existing[0]);assert.equal(h.elements[3],h.existing[1]);h.again();assert.equal(h.elements.length,4);
 });
 test('TV browser transfer requires confirmation and never sends access code in backup data',()=>{
