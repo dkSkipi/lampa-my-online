@@ -67,3 +67,10 @@ test('late successful response does not restart a closed player',()=>{
   f.ajax.success({ok:true,version:'0.10.1',items:[{quality:'720p',format:'MP4',url:'https://cdn.example/second.mp4'}]});
   assert.equal(f.events.length,0);assert.equal(f.starts,1);
 });
+
+test('late recovery does not undo manual quality change',()=>{
+ const f=setup();f.play.my_online_recover();const response=f.ajax;
+ f.play.url=f.play.quality['1080p / MP4'];
+ response.success({ok:true,apiVersion:1,items:[{quality:'720p',format:'MP4',url:'https://cdn.example/refreshed.mp4'}]});
+ assert.equal(f.play.url,'https://cdn.example/first-hd.mp4');assert.equal(f.events.length,0);
+});

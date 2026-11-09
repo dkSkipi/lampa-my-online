@@ -181,9 +181,10 @@
     play.my_online_recover=function () {
       if(!current()) return;
       remember(play,{time:play.timeline.time,duration:play.timeline.duration},false);
+      var requestedUrl=play.url;
       var oldKey=Object.keys(play.quality || {}).filter(function(key){return play.quality[key]===play.url;})[0];
       request(streamRoute(active.id,selection,movie)+'&refresh=1',function(data){
-        if(!current()) return;
+        if(!current() || play.url!==requestedUrl) return;
         var next=qualities(data.items),selected=preferredKey(next,oldKey);
         if(!selected || !panel || !panel.quality || !panel.listener) {notify('Не удалось обновить видео');return;}
         play.quality=next;play.my_online_error_shown=false;if(play.my_online_preferred) play.my_online_preferred=next[selected];
