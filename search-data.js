@@ -42,4 +42,26 @@ function parseSearch(html) {
   if(!cards.length && !/b-content__inline_items|b-search|search-results|По вашему запросу|ничего не найден|не дал результатов/i.test(clean)) throw new Error('SEARCH_FORMAT_UNKNOWN');
   return items;
 }
-module.exports={parseSearch,cardURL};
+function searchPath(query, cursor='') {
+  if (!cursor) return '/search/?'+new URLSearchParams({do:'search',subaction:'search',q:query});
+  const url=new URL(cursor,BASE);
+  if (cursor.length>1500 || url.origin!==BASE || url.username || url.password || url.hash ||
+      !/^\/search\/(?:page\/\d{1,4}\/)?$/.test(url.pathname) || url.searchParams.get('q')!==query) throw new Error('INVALID_QUERY');
+  return url.pathname+url.search;
+}
+function nextSearch(html, query, currentPath) {
+  const current=new URL(currentPath,BASE);
+  const page=Number(current.searchParams.get('search_start') || current.searchParams.get('page') || (current.pathname.match(/page\/(\d+)/) || [])[1] || 1);
+  const clean=html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi,'').replace(/<!--[\s\S]*?-->/g,'');
+  for (const match of clean.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)) {
+    const attrs=attributes(match[1]),caption=text(match[2]);
+    if(!attrs.href) continue;
+    if (!(attrs.rel || '').split(/\s+/).includes('next') && !/^(?:далее|следующая|впер[её]д|next|→|»)$/i.test(caption) && caption!==String(page+1)) continue;
+    try {
+      const candidate=searchPath(query,(attrs.href || '').replace(/&amp;/g,'&'));
+      if(candidate!==currentPath) return candidate;
+    } catch (_) {}
+  }
+  return null;
+}
+module.exports={parseSearch,cardURL,searchPath,nextSearch};

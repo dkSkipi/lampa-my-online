@@ -8,6 +8,7 @@ const EPISODES=[{season:1,episode:1,title:'Серия 1'},{season:1,episode:2,ti
 function harness(saved={},timers=false) {
   const store=structuredClone(saved),start=[],videoEvents={},jobs=[],notices=[],components=[],params=[],selectEvents=[];
   let follow,enter,resume,menu,ajax,play=null,opened=false,playlist=[],closed=0,starts=0,requests=0,selectOpen=false;
+  let clock=10000,controller='player_panel',panelVisible=true,hidden=0;const inputs={};
   const media={currentTime:0,readyState:0,paused:false,seeking:false,error:null};
   const box={length:1,eq(){return this;},append(){}};
   const root={find:s=>s==='.view--my-online-v0101'?{length:0}:box};
@@ -22,7 +23,9 @@ function harness(saved={},timers=false) {
   L.Select.hide=()=>{selectOpen=false;};L.Select.opened=()=>selectOpen;
   L.PlayerVideo={video:()=>media,listener:{follow:(event,fn)=>{videoEvents[event]=fn;}}};
   L.SettingsApi={addComponent:c=>components.push(c),addParam:p=>params.push(p)};
-  const globals={window:{Lampa:L,jQuery:$},document:{currentScript:{src:'https://example.org/plugin.js'},createElement:()=>({set href(s){const u=new URL(s);this.protocol=u.protocol;this.host=u.host;}})}};
+  L.Controller.enabled=()=>({name:controller});
+  L.PlayerPanel.visibleStatus=()=>panelVisible;L.PlayerPanel.toPlayer=()=>{hidden++;panelVisible=false;controller='player';};
+  const globals={Date:class extends Date {static now(){return clock;}},window:{Lampa:L,jQuery:$},document:{addEventListener:(name,fn)=>{inputs[name]=fn;},currentScript:{src:'https://example.org/plugin.js'},createElement:()=>({set href(s){const u=new URL(s);this.protocol=u.protocol;this.host=u.host;}})}};
   if(timers) globals.setTimeout=(fn,delay)=>{jobs.push({fn,delay});return jobs.length;};
   const context=vm.createContext(globals);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'plugin.js'),'utf8'),context);
@@ -46,13 +49,54 @@ function harness(saved={},timers=false) {
     const done=()=>{L.Player.play(item);if(item.callback) item.callback();};
     if(typeof item.url==='function') item.url(done);else done();
   }
-  return {store,metadata,normalStart,resolveStream,select,jobs,notices,components,params,media,
+  return {advance:ms=>{clock+=ms;},key:()=>inputs.keydown(),panel:()=>{panelVisible=true;controller='player_panel';},get hidden(){return hidden;},store,metadata,normalStart,resolveStream,select,jobs,notices,components,params,media,
     open:()=>enter(),resume:()=>resume(),close:()=>L.Player.close(),
     time:(time,duration)=>{media.currentTime=time;media.readyState=4;play.timeline.time=time;play.timeline.duration=duration;play.timeline.continued=true;if(videoEvents.timeupdate) videoEvents.timeupdate({current:time,duration});},
     otherMenu:()=>L.Select.show({title:'Качество',items:[]}),get menuOpen(){return selectOpen;},
     event:(event,data)=>videoEvents[event] && videoEvents[event](data),
     get requests(){return requests;},get play(){return play;},get ajax(){return ajax;},get menu(){return menu;},get playlist(){return playlist;},get starts(){return starts;},get closed(){return closed;}};
 }
+
+test('server restart restores the same selected video before resuming the request',()=>{
+  const h=harness();h.normalStart();h.time(120,1000);
+  h.play.my_online_recover();
+  const original=h.ajax.url;
+  h.ajax.error({status:502,responseJSON:{error:{code:'VIDEO_SELECTION_EXPIRED'}}},'error');
+  assert.match(h.ajax.url,/\/api\/rezka\/search\?/);
+  h.ajax.success({ok:true,apiVersion:1,items:[{id:'646'}]});
+  assert.equal(h.ajax.url,original);
+  h.resolveStream();assert.equal(h.play.timeline.time,120);
+  assert.equal(h.starts,1);
+});
+
+test('closing playback during selection restoration does not reopen it',()=>{
+  const h=harness();h.normalStart();h.play.my_online_recover();
+  h.ajax.error({status:502,responseJSON:{error:{code:'VIDEO_SELECTION_EXPIRED'}}},'error');
+  h.close();h.ajax.success({ok:true,apiVersion:1,items:[{id:'646'}]});
+  h.resolveStream();assert.equal(h.play,null);assert.equal(h.starts,1);
+});
+
+test('more search results are deduplicated and their page survives resume',()=>{
+  const h=harness();h.open();h.menu.onSelect(h.menu.items.find(i=>i.action==='search'));
+  const cursor='/search/?q=test&page=2';
+  h.ajax.success({ok:true,apiVersion:1,items:[{id:'101',title:'First'}],next:cursor});
+  h.menu.onSelect(h.menu.items.find(i=>i.next));
+  assert.equal(new URL(h.ajax.url).searchParams.get('cursor'),cursor);
+  h.ajax.success({ok:true,apiVersion:1,items:[{id:'101',title:'First'},{id:'202',title:'Second'}]});
+  assert.equal(h.menu.items.filter(i=>i.video).length,2);
+  h.menu.onSelect(h.menu.items.find(i=>i.video==='202'));
+  assert.equal(Object.values(h.store.my_online_card_links_v1)[0].cursor,cursor);
+  h.store.my_online_watch_v1={'202':{translation:'7',updated:1,episodes:{movie:{time:30,duration:100,percent:30}}}};
+  const restored=harness(h.store);restored.resume();
+  assert.equal(new URL(restored.ajax.url).searchParams.get('cursor'),cursor);
+});
+
+test('access failure offers code entry without automatic credential retries',()=>{
+  const h=harness();h.open();h.menu.onSelect(h.menu.items.find(i=>i.action==='search'));
+  h.ajax.error({status:401,responseJSON:{error:{code:'ACCESS_DENIED'}}},'error');
+  assert.equal(h.requests,1);assert.ok(h.menu.items.some(i=>i.code));
+  assert.match(h.notices.at(-1),/Код доступа не принят/);
+});
 test('episode playlist is lazy, crosses season boundary, remembers only successfully started episode',()=>{
   const h=harness();h.normalStart();
   assert.equal(h.store.my_online_watch_v1['646'].episode,1);
@@ -212,4 +256,13 @@ test('close or source switch prevents delayed popup; resume dialog is not covere
     if(action==='close') h.close();else if(action==='url') h.play.url='https://cdn.example/new.mp4';else h.play.timeline.waiting_for_user=true;
     h.jobs.shift().fn();assert.equal(h.menuOpen,false);
   }
+});
+
+test('remote panel hides after idle playback, respects input, pause and other menus',()=>{
+ const h=harness();h.normalStart();h.time(10,1000);
+ h.advance(4000);h.key();h.time(14,1000);assert.equal(h.hidden,0);
+ h.advance(4000);h.time(18,1000);assert.equal(h.hidden,0);
+ h.advance(1100);h.time(20,1000);assert.equal(h.hidden,1);
+ h.panel();h.media.paused=true;h.time(20,1000);h.advance(6000);h.time(20,1000);assert.equal(h.hidden,1);
+ h.media.paused=false;h.otherMenu();h.time(21,1000);h.advance(6000);h.time(27,1000);assert.equal(h.hidden,1);
 });

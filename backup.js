@@ -28,6 +28,7 @@
       var r=data.links[key];
       if(key==='__proto__' || key==='constructor' || key==='prototype' || !safeText(key,500) || key.indexOf(':')<0 || !object(r) || !id(r.video) || !safeText(r.query,200) || !r.query.trim()) return;
       links[key]={video:r.video,query:r.query.trim(),updated:stamp(r.updated)};
+      if(safeText(r.cursor,1500) && /^\/search\/(?:page\/\d{1,4}\/)?\?[^#]*$/.test(r.cursor)) links[key].cursor=r.cursor;
     });
     if(object(data.preferences)) {
       if(safeText(data.preferences.voice,100)) preferences.voice=data.preferences.voice;

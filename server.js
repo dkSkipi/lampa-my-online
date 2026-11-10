@@ -5,6 +5,7 @@ const path = require('node:path');
 const {timingSafeEqual}=require('node:crypto');
 const VERSION = '0.10.1';
 const {createProbe} = require('./rezka');
+const {searchPath}=require('./search-data');
 const {createTransfer,readBody}=require('./backup-transfer');
 const DEMO = 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4';
 function origin(value) {
@@ -57,7 +58,10 @@ function createServer(config = {}) {
           if(u.pathname === '/api/rezka/search') {
             const q=(u.searchParams.get('q') || '').trim();
             if(!q || q.length>200) return send(400,{ok:false,error:{code:'INVALID_QUERY',message:'Введите название от 1 до 200 символов.'}});
-            return send(200,{ok:true,version:VERSION,items:await probe.search(q)});
+            const cursor=u.searchParams.get('cursor') || '';
+            try {searchPath(q,cursor);} catch (_) {return send(400,{ok:false,error:{code:'INVALID_QUERY',message:'Страница поиска недоступна. Начните поиск заново.'}});}
+            const items=await probe.search(q,cursor);
+            return send(200,{ok:true,version:VERSION,items,next:items.next || null});
           }
           const video=u.searchParams.get('video') || undefined;
           if(video && !/^\d{1,12}$/.test(video)) return send(400,{ok:false,error:{code:'INVALID_VIDEO',message:'Выберите видео из результатов поиска.'}});

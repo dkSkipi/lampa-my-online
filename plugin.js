@@ -26,6 +26,30 @@
     }
   }
   function playerElement() {try{return L.PlayerVideo && L.PlayerVideo.video?L.PlayerVideo.video():null;}catch(_){return null;}}
+
+  // Lampa pins a panel opened with the remote. Release only our playing video,
+  // after inactivity, through its native API (never hide a Select or Modal).
+  var panelIdleAt=Date.now(),panelIdlePlay=null,panelIdleController=null;
+  function panelActivity() {panelIdleAt=Date.now();}
+  if(document.addEventListener) {
+    ['keydown','mousedown','mousemove','touchstart'].forEach(function(name){
+      document.addEventListener(name,panelActivity,false);
+    });
+  }
+  function autoHidePanel() {
+    var play=L.Player.playdata && L.Player.playdata(),media=playerElement();
+    var controller=L.Controller && L.Controller.enabled && L.Controller.enabled();
+    var name=controller && controller.name,panel=L.PlayerPanel;
+    var eligible=play && play.my_online_watch && L.Player.opened && L.Player.opened() &&
+      media && media.paused===false && !media.seeking && !media.error &&
+      panel && panel.visibleStatus && panel.visibleStatus() && panel.toPlayer &&
+      (name==='player' || name==='player_panel' || name==='player_rewind') &&
+      !(L.Select.opened && L.Select.opened()) && !(L.Modal && L.Modal.opened && L.Modal.opened());
+    if(!eligible || panelIdlePlay!==play || panelIdleController!==name) panelActivity();
+    panelIdlePlay=play;panelIdleController=name;
+    if(eligible && Date.now()-panelIdleAt>=5000) {panelActivity();panel.toPlayer();}
+  }
+
   var watchKey='my_online_watch_v1';
   function stored(key,fallback) {try {return L.Storage?L.Storage.get(key,fallback):fallback;}catch(_){return fallback;}}
   function prefs() {var p=stored('my_online_preferences_v1',{});return p && typeof p==='object'?p:{};}
@@ -69,11 +93,13 @@
     remember(play);
   });
   if(L.PlayerVideo && L.PlayerVideo.listener && L.PlayerVideo.listener.follow) {
+    L.PlayerVideo.listener.follow('play',panelActivity);
     L.PlayerVideo.listener.follow('canplay',cancelRecoveryWarning);
     L.PlayerVideo.listener.follow('loadeddata',cancelRecoveryWarning);
     L.PlayerVideo.listener.follow('destroy',cancelRecoveryWarning);
     if(L.Player.listener && L.Player.listener.follow) L.Player.listener.follow('close',cancelRecoveryWarning);
     L.PlayerVideo.listener.follow('timeupdate',function () {
+      autoHidePanel();
       if(recoveryWarning) {
         var media=playerElement();
         if(media && !media.error && !media.seeking && Number(media.currentTime)>recoveryWarning.time+0.05) cancelRecoveryWarning();
@@ -122,7 +148,38 @@
     function failed() { if(onFail) onFail(); }
     if (busy) { notify('Запрос уже выполняется. Подождите.'); failed(); return; }
     busy = true;
-    var attempt=0;
+    var attempt=0,restoredSelection=false;
+    var videoMatch=route.match(/[?&]video=(\d+)/);
+    function report(errorCode,message) {
+      var messages={
+        ACCESS_DENIED:'Код доступа не принят. Введите код из настроек вашего сервера.',
+        ACCESS_CODE_NOT_CONFIGURED:'На сервере ещё не настроен код доступа.',
+        AUTH_REQUIRED:'Rezka требует входа. Проверьте аккаунт в настройках сервера.',
+        LOGIN_REJECTED:'Rezka не приняла данные входа. Проверьте их на сайте.',
+        SESSION_EXPIRED:'Не удалось восстановить вход на Rezka. Повторите через минуту.',
+        CHECKING:'Сервер запускается и проверяет вход. Повторите через несколько секунд.',
+        VIDEO_SELECTION_EXPIRED:'Сервер перезапустился. Откройте фильм через поиск заново.',
+        BLOCKED:'Rezka ограничила доступ с сервера. Попробуйте позднее.',
+        RATE_LIMITED:'Слишком много запросов к Rezka. Подождите минуту.',
+        NETWORK:'Не удалось связаться с сервером или Rezka. Проверьте интернет.',
+        TIMEOUT:'Сервер долго отвечает. Возможно, он запускается после сна.',
+        STREAM_REJECTED:'Источник не отдал видео. Попробуйте другую озвучку.',
+        NO_PLAYABLE_STREAMS:'Подходящее видео не найдено. Попробуйте другую озвучку.',
+        EPISODE_NOT_AVAILABLE:'Этой серии нет в выбранной озвучке.',
+        WAIT_AND_RETRY:'Сервер занят другим запросом. Повторите через несколько секунд.'
+      };
+      notify((messages[errorCode] || message || 'Не удалось выполнить запрос.')+' ['+errorCode+']');
+      if(onFail) return;
+      var options=[{title:'Закрыть'}];
+      if(errorCode==='ACCESS_DENIED') options.unshift({title:'Ввести код доступа',code:true});
+      else if(videoMatch && ['STREAM_REJECTED','NO_PLAYABLE_STREAMS','EPISODE_NOT_AVAILABLE'].indexOf(errorCode)>=0) options.unshift({title:'Выбрать другую озвучку',voice:true});
+      else if(['NETWORK','TIMEOUT','CHECKING','WAIT_AND_RETRY','SESSION_EXPIRED','RATE_LIMITED'].indexOf(errorCode)>=0) options.unshift({title:'Повторить',retry:true});
+      if(options.length>1) menu('Не удалось загрузить',options,function(item){
+        if(item.code) editCode('full_start');
+        if(item.voice) rezkaMovie(videoMatch[1],false,true);
+        if(item.retry) request(route,callback,privateRequest,onFail);
+      });
+    }
     notify('Загрузка… Первый запрос может занять до 90 секунд.');
     var code=L.Storage ? L.Storage.get('my_online_access_code','') : '';
     function send() {$.ajax({url:API+route,dataType:'json',timeout:90000,cache:false,headers:privateRequest?{Authorization:'Bearer '+code}:{},
@@ -132,14 +189,28 @@
         try { callback(data); } catch (e) { notify('CLIENT_ERROR: '+e.message); failed(); }
       },error:function (xhr,status) {
         var errorCode=xhr.responseJSON && xhr.responseJSON.error && xhr.responseJSON.error.code;
+        if(errorCode==='VIDEO_SELECTION_EXPIRED' && videoMatch && !restoredSelection) {
+          restoredSelection=true;
+          var links=stored('my_online_card_links_v1',{});
+          var saved=Object.keys(links || {}).map(function(key){return links[key];}).filter(function(link){return link && String(link.video)===videoMatch[1] && link.query;})[0];
+          if(saved) {
+            busy=false;
+            notify('Сервер перезапустился. Восстанавливаю выбранный фильм…');
+            request(searchRoute(saved.query,saved.cursor),function(data){
+              if((data.items || []).some(function(item){return String(item.id)===videoMatch[1];})) {busy=true;send();}
+              else {failed();report('VIDEO_SELECTION_EXPIRED');}
+            },true,function(){failed();});
+            return;
+          }
+        }
         if(attempt<1 && typeof setTimeout==='function' && (errorCode==='NETWORK' || errorCode==='WAIT_AND_RETRY' || !errorCode && (status==='timeout' || xhr.status===0))) {
           attempt++;notify('Связь прервалась. Повторяю запрос…');setTimeout(send,2500);return;
         }
         busy = false;
         failed();
-        if(xhr.responseJSON && xhr.responseJSON.error) { notify(xhr.responseJSON.error.code+': '+xhr.responseJSON.error.message); return; }
+        if(xhr.responseJSON && xhr.responseJSON.error) { report(errorCode,xhr.responseJSON.error.message); return; }
         var code = status === 'timeout' ? 'TIMEOUT' : status === 'parsererror' ? 'INVALID_JSON' : xhr.status ? 'HTTP_'+xhr.status : 'NETWORK';
-        notify(code+': '+(xhr.status === 0 || status === 'timeout' ? 'Проверьте интернет и /health. Затем повторите запрос.' : 'Сервер не вернул ожидаемый ответ. Проверьте Render.')+' Адрес: '+API);
+        report(code,'Сервер не вернул ожидаемый ответ. Повторите позднее.');
       }});}
     send();
   }
@@ -393,7 +464,7 @@
     L.SettingsApi.addComponent({component:'my_online',name:'Мой онлайн',icon:'<svg viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>'});
     L.SettingsApi.addParam({component:'my_online',param:{name:'my_online_options',type:'button'},field:{name:'Параметры просмотра',description:'Озвучка, качество, резервная копия и код доступа'},onChange:settings});
   }
-  function rezkaMovie(videoId,continueNow) {
+  function rezkaMovie(videoId,continueNow,chooseVoice) {
     request('/api/rezka/movie'+(videoId?'?video='+encodeURIComponent(videoId):''),function (data) {
       var movie=data.movie;
       var saved=watched(movie);
@@ -434,22 +505,22 @@
       var quick=options.filter(function(option){return option.resume;})[0] || previous;
       var preferredVoice=options.filter(function(option){return !option.resume && option.id===chosen;})[0];
       if(continueNow && quick) choose(quick);
-      else if(!saved.translation && favourite && preferredVoice) choose(preferredVoice);
+      else if(!chooseVoice && !saved.translation && favourite && preferredVoice) choose(preferredVoice);
       else menu(movie.title+' • озвучка',options,choose);
     },true);
   }
   function cardKey(card) {return String(card.source || 'tmdb')+':'+String(card.media_type || (card.first_air_date?'tv':'movie'))+':'+String(card.id || (card.title || card.name || '')+':'+(card.release_date || card.first_air_date || ''));}
   function cardLink(card) {var links=stored('my_online_card_links_v1',{});return links && typeof links==='object'?links[cardKey(card)]:null;}
-  function linkCard(card,item,query) {
+  function linkCard(card,item,query,cursor) {
     if(!L.Storage || !L.Storage.set) return;
     var links=stored('my_online_card_links_v1',{});if(!links || typeof links!=='object' || Array.isArray(links)) links={};
-    links[cardKey(card)]={video:item.video,query:query,updated:Date.now()};
+    links[cardKey(card)]={video:item.video,query:query,cursor:cursor || '',updated:Date.now()};
     Object.keys(links).sort(function(a,b){return (links[b].updated || 0)-(links[a].updated || 0);}).slice(100).forEach(function(key){delete links[key];});
     L.Storage.set('my_online_card_links_v1',links);
   }
   function resumeCard(card) {
     var link=cardLink(card);if(!link) {searchMovie(card);return;}
-    request('/api/rezka/search?q='+encodeURIComponent(link.query),function(data){
+    request(searchRoute(link.query,link.cursor),function(data){
       if((data.items || []).some(function(item){return item.id===link.video;})) rezkaMovie(link.video,true);
       else {notify('Сохранённый результат не найден. Выберите совпадение заново.');searchMovie(card,link.query);}
     },true);
@@ -461,24 +532,32 @@
       restore();query=String(query || '').trim();if(query) searchMovie(card,query);
     });
   }
-  function searchMovie(card,query) {
+  function searchRoute(query,cursor) {
+    return '/api/rezka/search?q='+encodeURIComponent(query)+(cursor?'&cursor='+encodeURIComponent(cursor):'');
+  }
+  function searchMovie(card,query,cursor,previous,visited) {
     query=String(query || card.title || card.name || card.original_title || card.original_name || '').trim();
     if(!query) {editSearch(card,'');return;}
-    request('/api/rezka/search?q='+encodeURIComponent(query.slice(0,200)),function (data) {
+    query=query.slice(0,200);
+    previous=previous || [];visited=visited || [];
+    request(searchRoute(query,cursor),function (data) {
       var year=String(card.release_date || card.first_air_date || card.year || '').slice(0,4);
       var type=card.media_type || (card.first_air_date?'series':'movie');if(type==='tv') type='series';
-      var items=(data.items || []).slice();
+      var items=previous.slice();
+      (data.items || []).forEach(function(item){if(!items.some(function(existing){return existing.id===item.id;})) {item.searchCursor=cursor || '';items.push(item);}});
       function rank(item) {return (year && item.year===year?2:0)+(item.type===type?1:0);}
       items.sort(function (a,b) {return rank(b)-rank(a);});
       var options=items.map(function (item) {
         var kind=item.type==='series'?'сериал':item.type==='animation'?'анимация':'фильм';
-        return {title:label(item.title)+(item.year?' ('+label(item.year)+')':'')+' • '+kind,subtitle:label(item.description),video:item.id};
+        return {title:label(item.title)+(item.year?' ('+label(item.year)+')':'')+' • '+kind,subtitle:label(item.description),video:item.id,cursor:item.searchCursor};
       });
+      if(data.next && data.next!==cursor && visited.indexOf(data.next)<0 && items.length<400) options.push({title:'Показать ещё результаты',next:data.next});
       options.push({title:'Ввести другое название',edit:true});
       var original=card.original_title || card.original_name;
       if(original && original!==query) options.push({title:'Искать: '+label(original),query:original});
       menu(items.length?'Rezka • результаты поиска':'Совпадений нет • '+label(query),options,function (item) {
-        if(item.video) {linkCard(card,item,query);rezkaMovie(item.video);}
+        if(item.video) {linkCard(card,item,query,item.cursor);rezkaMovie(item.video);}
+        else if(item.next) searchMovie(card,query,item.next,items,visited.concat(cursor || ''));
         else if(item.edit) editSearch(card,query);
         else if(item.query) searchMovie(card,item.query);
       });

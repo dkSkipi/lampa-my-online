@@ -5,6 +5,35 @@ const {createProbe}=require('./rezka');
 const LOGIN='<form id="loginForm"><input type="password"></form>';
 const FILM='<div class="b-content__main" data-id="93568">Gladiator</div>';
 function response(text,status=200,headers={}) { return new Response(text,{status,headers}); }
+
+test('expired sessions recover once, share recovery and respect cooldown',async()=>{
+  let time=100000,expired=false,logins=0;
+  const probe=createProbe({login:'user',password:'password',now:()=>time,fetchImpl:async(url)=>{
+    if(url.includes('/ajax/login/')) {logins++;expired=false;return response('{"success":true}');}
+    if(expired) return response(LOGIN);
+    if(url.includes('/search/')) return response('<div class="b-content__inline_items"></div>');
+    return response(FILM);
+  }});
+  await probe.run();expired=true;
+  await probe.search('one');assert.equal(logins,1);
+  expired=true;
+  await assert.rejects(probe.search('two'),/SESSION_EXPIRED/);assert.equal(logins,1);
+  time+=61000;
+  await Promise.all([probe.search('three'),probe.search('four').catch(error=>{assert.equal(error.message,'WAIT_AND_RETRY');})]);
+  assert.equal(logins,2);
+});
+
+test('recovery never repeatedly submits rejected credentials',async()=>{
+  let expired=false,logins=0;
+  const probe=createProbe({login:'user',password:'password',fetchImpl:async url=>{
+    if(url.includes('/ajax/login/')) {logins++;return response('{"success":false}');}
+    return response(expired?LOGIN:FILM);
+  }});
+  await probe.run();expired=true;
+  await assert.rejects(probe.search('one'),/LOGIN_REJECTED/);
+  await assert.rejects(probe.search('two'),/LOGIN_REJECTED/);
+  assert.equal(logins,1);
+});
 test('anonymous login gate and HTTP failures are distinct',async()=>{
   for(const [reply,code] of [[response(LOGIN),'AUTH_REQUIRED'],[response('',403),'BLOCKED'],[response('',429),'RATE_LIMITED'],[response('<html>unknown</html>'),'PAGE_UNRECOGNIZED']]) {
     const probe=createProbe({fetchImpl:async()=>reply});

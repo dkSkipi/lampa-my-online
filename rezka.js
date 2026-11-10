@@ -3,7 +3,7 @@
 const BASE = 'https://rezka.si';
 const FILM = '/films/action/93568-gladiator-1986.html';
 const {parsePage,parseStreams,parseEpisodes}=require('./player-data');
-const {parseSearch}=require('./search-data');
+const {parseSearch,searchPath,nextSearch}=require('./search-data');
 const MESSAGES = {
   CHECKING:'Проверяется вход на Rezka…',
   NOT_CONFIGURED:'Добавьте REZKA_LOGIN и REZKA_PASSWORD в Environment сервиса Render.',
@@ -32,6 +32,7 @@ function createProbe({login, password, filmUrl=BASE+FILM, fetchImpl=fetch, now=(
   const filmPath=target.pathname,filmId=idMatch[1];
   let state = {code:'NOT_CONFIGURED',message:MESSAGES.NOT_CONFIGURED,checkedAt:null,streamReady:false};
   let started = false;
+  let recovery=null,lastRecovery=-Infinity;
   // In-memory, same-origin session. Never returned to callers or written to logs.
   const jar = new Map();
   let movieData=null;
@@ -119,25 +120,28 @@ function createProbe({login, password, filmUrl=BASE+FILM, fetchImpl=fetch, now=(
     return {id:movieData.id,type:movieData.type,title:movieData.title,translations:movieData.translations.map(t=>({id:t.id,name:t.name}))};
   }
   function ready() {if(state.code!=='PAGE_AVAILABLE') throw new Error(state.code);}
-  async function search(query) {
+  async function search(query, cursor='') {
     ready();const q=String(query || '').trim();
     if(!q || q.length>200) throw new Error('INVALID_QUERY');
-    const cacheKey=q.toLowerCase();let items;
+    const requestPath=searchPath(q,cursor);
+    const cacheKey=requestPath;let items;
     const cached=searchCache.get(cacheKey);
     if(cached && cached.until>now()) items=cached.items;
     else {
       if(busy) throw new Error('WAIT_AND_RETRY');busy=true;
       try {
-        const params=new URLSearchParams({do:'search',subaction:'search',q});
-        const html=await request('/search/?'+params);
+        const html=await request(requestPath);
         if(isLogin(html)) throw new Error('SESSION_EXPIRED');
         items=parseSearch(html);
+        items.next=nextSearch(html,q,requestPath);
         searchCache.set(cacheKey,{until:now()+60000,items});
         if(searchCache.size>50) searchCache.delete(searchCache.keys().next().value);
       } finally {busy=false;}
     }
     items.forEach(addVideo);
-    return items.map(({id,title,year,type,description})=>({id,title,year,type,description}));
+    const result=items.map(({id,title,year,type,description})=>({id,title,year,type,description}));
+    result.next=items.next || null;
+    return result;
   }
   async function record(videoId=filmId) {
     ready();const entry=videos.get(String(videoId));
@@ -201,7 +205,32 @@ function createProbe({login, password, filmUrl=BASE+FILM, fetchImpl=fetch, now=(
       return items;
     } finally { busy=false; }
   }
-  return {run,status:()=>({...state,playerRecognized:!!movieData}),movie,stream,episodes,search,details};
+  async function recoverSession() {
+    if(recovery) return recovery;
+    if(now()-lastRecovery<60000 || ['LOGIN_REJECTED','AUTH_REQUIRED','CONFIG_INCOMPLETE','LOGIN_REQUIRED_AFTER_SUCCESS'].includes(state.code)) throw new Error(state.code==='PAGE_AVAILABLE'?'SESSION_EXPIRED':state.code);
+    lastRecovery=now();
+    recovery=(async()=>{
+      jar.clear();streamCache.clear();episodeCache.clear();searchCache.clear();
+      for(const entry of videos.values()) {entry.data=null;entry.until=0;}
+      started=false;
+      await run();
+      ready();
+    })();
+    try {await recovery;} finally {recovery=null;}
+  }
+  function recoverable(operation) {
+    return async function(...args) {
+      if(recovery) await recovery;
+      try {return await operation(...args);} catch(error) {
+        if(!['SESSION_EXPIRED','NETWORK'].includes(error.message)) throw error;
+        // Network failures during an established session use the caller's retry.
+        if(error.message==='NETWORK' && state.code==='PAGE_AVAILABLE') throw error;
+        await recoverSession();
+        return operation(...args);
+      }
+    };
+  }
+  return {run,status:()=>({...state,playerRecognized:!!movieData}),movie,stream:recoverable(stream),episodes:recoverable(episodes),search:recoverable(search),details:recoverable(details)};
 }
 module.exports={createProbe};
 if(require.main===module) {

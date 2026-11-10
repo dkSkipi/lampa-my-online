@@ -6,6 +6,14 @@ const {createTransfer}=require('./backup-transfer');
 const {createServer}=require('./server');
 function example(){return {format:'lampa-my-online-backup',schemaVersion:1,createdAt:'2026-11-05T12:00:00.000Z',data:{watch:{'646':{translation:'7',season:1,episode:2,updated:200,episodes:{'1:1':{time:960,duration:1000,updated:190},'1:2':{time:123.5,duration:1000,updated:200}}}},links:{'tmdb:tv:1396':{video:'646',query:'Во все тяжкие',updated:200}},preferences:{voice:'LostFilm',quality:'1080p'}}};}
 function storage(values){const data=structuredClone(values),writes=[];return {data,writes,get:(k,f)=>structuredClone(data[k]===undefined?f:data[k]),set:(k,v)=>{writes.push(k);data[k]=structuredClone(v);}};}
+
+test('backup preserves a search page and discards external cursor URLs',()=>{
+  const input=example(),link=input.data.links['tmdb:tv:1396'];
+  link.cursor='/search/?q=test&page=2';
+  assert.equal(Backup.parse(input).data.links['tmdb:tv:1396'].cursor,link.cursor);
+  link.cursor='https://evil.invalid/private';
+  assert.equal(Backup.parse(input).data.links['tmdb:tv:1396'].cursor,undefined);
+});
 test('backup round trip includes only approved fields and never credentials or media URLs',()=>{
   const input=example();input.data.watch['646'].password='secret-password';input.data.watch['646'].episodes['1:2'].url='https://cdn.example/private-token.mp4';input.data.preferences.token='secret-token';input.data.links['tmdb:tv:1396'].cookie='private-cookie';
   const source=storage({my_online_watch_v1:input.data.watch,my_online_card_links_v1:input.data.links,my_online_preferences_v1:input.data.preferences,my_online_access_code:'access-secret',REZKA_PASSWORD:'secret-password'});

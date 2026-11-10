@@ -9,6 +9,26 @@ function card(id,type,title,year,host='https://rezka.si') {
 }
 function page(id,series=false) {return '<div class="b-content__main" id="'+id+'"><h1>Видео '+id+'</h1><li class="b-translator__item" data-translator_id="7">Дубляж</li></div><script>initCDN'+(series?'Series':'Movies')+'Events('+id+', 7, false, {});</script>';}
 const RESULTS='<div class="b-content__inline_items">'+card('101','films','Фильм &amp; название','2001')+card('202','series','Сериал','2008')+'</div>';
+
+test('search follows a provider next link and caches pages separately',async()=>{
+  const {searchPath,nextSearch}=require('./search-data');
+  const first=searchPath('Фильм'),next=first+'&page=2';
+  const html=RESULTS+'<a href="'+next.replace(/&/g,'&amp;')+'">2</a>';
+  assert.equal(nextSearch(html,'Фильм',first),next);
+  assert.equal(nextSearch('<a rel="next" href="https://evil.invalid/search/?q=Фильм">Next</a>','Фильм',first),null);
+  assert.throws(()=>searchPath('Фильм','/ajax/login/?q=Фильм'),/INVALID_QUERY/);
+  let count=0;
+  const probe=createProbe({fetchImpl:async url=>{
+    if(!url.includes('/search/')) return new Response(page(url.match(/\/(\d+)-/)[1]));
+    count++;
+    return new Response(url.includes('page=2')?'<div class="b-content__inline_items">'+card('303','films','Другой','2020')+'</div>':html);
+  }});
+  await probe.run();
+  const a=await probe.search('Фильм');assert.equal(a.next,next);
+  const b=await probe.search('Фильм',a.next);assert.equal(b[0].id,'303');assert.equal(b.next,null);
+  await probe.search('Фильм');assert.equal(count,2);
+  assert.equal((await probe.details('303')).id,'303');
+});
 test('nested search cards retain names/year/type, exclude outside URLs, deduplicate',()=>{
   const items=parseSearch(RESULTS+card('101','films','Дубль','2001')+card('303','films','Внешний','2003','https://evil.invalid'));
   assert.equal(items.length,2);assert.equal(items[0].title,'Фильм & название');assert.equal(items[0].year,'2001');assert.equal(items[1].type,'series');
