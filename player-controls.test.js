@@ -74,3 +74,42 @@ test('late recovery does not undo manual quality change',()=>{
  response.success({ok:true,apiVersion:1,items:[{quality:'720p',format:'MP4',url:'https://cdn.example/refreshed.mp4'}]});
  assert.equal(f.play.url,'https://cdn.example/first-hd.mp4');assert.equal(f.events.length,0);
 });
+
+test('CDN alternatives remain selectable; duplicate URLs do not duplicate sources',()=>{
+ const f=setup();f.play.my_online_recover();
+ f.ajax.success({ok:true,apiVersion:1,items:[
+  {quality:'720p',format:'MP4',url:'https://cdn.example/a.mp4'},
+  {quality:'720p',format:'MP4',url:'https://backup.example/b.mp4'},
+  {quality:'720p',format:'MP4',url:'https://backup.example/b.mp4'},
+  {quality:'720p',format:'HLS',url:'https://cdn.example/a.m3u8'}
+ ]});
+ assert.equal(Object.keys(f.play.quality).length,3);
+ assert.equal(f.play.quality['720p / MP4 / Источник 2'],'https://backup.example/b.mp4');
+ assert.equal(f.play.url,'https://cdn.example/a.mp4');
+});
+
+test('refresh keeps manually selected resolution when its source disappears',()=>{
+ const f=setup();f.play.my_online_recover();
+ f.ajax.success({ok:true,apiVersion:1,items:[
+  {quality:'1080p',format:'MP4',url:'https://cdn.example/hd.mp4'},
+  {quality:'720p',format:'HLS',url:'https://cdn.example/sd.m3u8'},
+  {quality:'480p',format:'MP4',url:'https://cdn.example/low.mp4'}
+ ]});
+ assert.equal(f.play.url,'https://cdn.example/sd.m3u8');
+});
+
+test('missing resolution falls back down and missing alternative keeps first source',()=>{
+ const f=setup();f.play.my_online_recover();
+ f.ajax.success({ok:true,apiVersion:1,items:[
+  {quality:'1080p',format:'MP4',url:'https://cdn.example/hd.mp4'},
+  {quality:'480p',format:'MP4',url:'https://cdn.example/low.mp4'},
+  {quality:'480p',format:'MP4',url:'https://backup.example/low.mp4'}
+ ]});
+ assert.equal(f.play.url,'https://cdn.example/low.mp4');
+ f.play.url=f.play.quality['480p / MP4 / Источник 2'];f.play.my_online_recover();
+ f.ajax.success({ok:true,apiVersion:1,items:[
+  {quality:'1080p',format:'MP4',url:'https://cdn.example/hd2.mp4'},
+  {quality:'480p',format:'MP4',url:'https://cdn.example/low2.mp4'}
+ ]});
+ assert.equal(f.play.url,'https://cdn.example/low2.mp4');
+});

@@ -215,20 +215,31 @@
     send();
   }
   function qualities(items) {
-    var result={};
+    var result={},seen=[];
     (items || []).forEach(function (v) {
       if(!/^https:\/\//i.test(v.url || '')) return;
-      var key=String(v.quality || 'Авто')+' / '+String(v.format || 'Видео');
-      if(!Object.prototype.hasOwnProperty.call(result,key)) result[key]=v.url;
+      if(seen.indexOf(v.url)>=0) return;
+      seen.push(v.url);
+      var base=String(v.quality || 'Авто')+' / '+String(v.format || 'Видео'),key=base,index=2;
+      // Keep provider alternatives available when one CDN route is slow.
+      while(Object.prototype.hasOwnProperty.call(result,key)) key=base+' / Источник '+index++;
+      result[key]=v.url;
     });
     return result;
   }
   function preferredKey(quality,current) {
     if(current && Object.prototype.hasOwnProperty.call(quality,current)) return current;
-    var keys=Object.keys(quality),wanted=parseInt(prefs().quality,10);
+    // A refreshed/changed voice can omit the selected source. Keep its
+    // resolution ceiling instead of reverting to the global preference.
+    var keys=Object.keys(quality),wanted=parseInt(current,10) || parseInt(prefs().quality,10);
     if(!wanted) return keys[0];
-    keys.sort(function(a,b){return parseInt(b,10)-parseInt(a,10);});
-    return keys.filter(function(key){return parseInt(key,10)<=wanted;})[0] || keys[keys.length-1];
+    var ranked=keys.filter(function(key){return parseInt(key,10)>0;});
+    ranked.sort(function(a,b){return parseInt(b,10)-parseInt(a,10) || keys.indexOf(a)-keys.indexOf(b);});
+    if(!ranked.length) return keys[0];
+    var selected=ranked.filter(function(key){return parseInt(key,10)<=wanted;})[0];
+    if(selected) return selected;
+    var minimum=parseInt(ranked[ranked.length-1],10);
+    return ranked.filter(function(key){return parseInt(key,10)===minimum;})[0];
   }
   function videoQuery(movie) {return movie && movie.id?'&video='+encodeURIComponent(movie.id):'';}
   function streamRoute(id,selection,movie) {
